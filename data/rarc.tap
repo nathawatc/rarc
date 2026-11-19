@@ -1,0 +1,31 @@
+#!/bin/sh
+#
+# rarc.tap - Wrapper script to create and extract archive files in Thunar
+#            via thunar-archive-plugin using rarc.
+#
+
+action=$1
+shift
+folder=$1
+shift
+
+cd "$folder" || exit 1
+
+case "$action" in
+	create)
+		exec rarc --tap create "$@"
+		;;
+
+	extract-here)
+		exec rarc --tap extract-here "$@"
+		;;
+
+	extract-to)
+		exec rarc --tap extract-to "$@"
+		;;
+
+	*)
+		echo "Unsupported action '$action'" >&2
+		exit 1
+		;;
+esac

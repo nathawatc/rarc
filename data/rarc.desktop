@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=rarc
+GenericName=Archive Manager
+Comment=Lightweight GTK4 archive manager powered by libarchive
+Icon=package-x-generic
+Exec=rarc %f
+StartupNotify=true
+Terminal=false
+Categories=GTK;Utility;Archiving;Compression;
+Keywords=archive;compress;decompress;extract;pack;uncompress;unpack;7z;ar;bz2;bzip2;cab;cb7;cbr;cbt;cbz;cpio;deb;epub;gz;gzip;iso;jar;lha;lrzip;lz4;lzh;lzip;lzma;lzop;rar;rpm;tar;xz;zip;zst;zstd;
+MimeType=application/epub+zip;application/gzip;application/java-archive;application/vnd.android.package-archive;application/vnd.comicbook-rar;application/vnd.comicbook+zip;application/vnd.debian.binary-package;application/vnd.efi.iso;application/vnd.ms-cab-compressed;application/vnd.rar;application/x-7z-compressed;application/x-7z-compressed-tar;application/x-ar;application/x-archive;application/x-bzip;application/x-bzip-compressed-tar;application/x-bzip2;application/x-bzip2-compressed-tar;application/x-cb7;application/x-cbt;application/x-cd-image;application/x-compress;application/x-compressed-tar;application/x-cpio;application/x-cpio-compressed;application/x-deb;application/x-gtar;application/x-gzip;application/x-java-archive;application/x-lha;application/x-lhz;application/x-lrzip;application/x-lrzip-compressed-tar;application/x-lz4;application/x-lz4-compressed-tar;application/x-lzip;application/x-lzip-compressed-tar;application/x-lzma;application/x-lzma-compressed-tar;application/x-lzop;application/x-rar;application/x-rar-compressed;application/x-rpm;application/x-source-rpm;application/x-tar;application/x-tarz;application/x-tzo;application/x-xar;application/x-xpinstall;application/x-xz;application/x-xz-compressed-tar;application/x-zip;application/x-zip-compressed;application/x-zip-compressed-fb2;application/x-zstd-compressed-tar;application/zip;application/zstd;multipart/x-zip;
