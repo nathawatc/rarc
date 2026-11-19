@@ -725,7 +725,7 @@ pub fn extract_archive(
             let Some(sanitized) = sanitize_entry_path(&raw_name)? else {
                 continue;
             };
-            let mut archive_rel_str = if raw_mode && path_to_slash_string(&sanitized) == "data" {
+            let archive_rel_str = if raw_mode && path_to_slash_string(&sanitized) == "data" {
                 archive_stem(archive_path)
             } else {
                 path_to_slash_string(&sanitized)
@@ -736,14 +736,9 @@ pub fn extract_archive(
                 continue;
             }
 
-            if let Some(prefix) = strip_prefix.filter(|p| !p.is_empty()) {
-                let prefix_slash = format!("{}/", prefix.trim_end_matches('/'));
-                if let Some(stripped) = archive_rel_str.strip_prefix(&prefix_slash) {
-                    archive_rel_str = stripped.to_string();
-                } else if archive_rel_str == prefix.trim_end_matches('/') {
-                    continue;
-                }
-            }
+            let Some(archive_rel_str) = apply_strip_prefix(&archive_rel_str, strip_prefix) else {
+                continue;
+            };
 
             let Some(mut rel_out) = sanitize_entry_path(&archive_rel_str)? else {
                 continue;
@@ -792,16 +787,17 @@ pub fn extract_archive(
             let target_cstr = path_to_cstring(&target_path)?;
             ffi::archive_entry_set_pathname(entry, target_cstr.as_ptr());
 
-            let hardlink = ffi::archive_entry_hardlink(entry);
-            if !hardlink.is_null() {
-                let hl_str = CStr::from_ptr(hardlink).to_string_lossy();
-                if let Some(safe_hl) = sanitize_entry_path(&hl_str)? {
-                    let hl_dest = dest_dir.join(safe_hl);
-                    let hl_cstr = path_to_cstring(&hl_dest)?;
-                    ffi::archive_entry_set_hardlink(entry, hl_cstr.as_ptr());
-                } else {
-                    return Err(ArchiveError::UnsafePath(hl_str.into_owned()));
-                }
+            if let Some(hl_str) = entry_hardlink_string(entry) {
+                let Some(safe_hl) = sanitize_entry_path(&hl_str)? else {
+                    return Err(ArchiveError::UnsafePath(hl_str));
+                };
+                let hl_rel = path_to_slash_string(&safe_hl);
+                let stripped_hl = apply_strip_prefix(&hl_rel, strip_prefix)
+                    .and_then(|s| sanitize_entry_path(&s).ok().flatten())
+                    .unwrap_or(safe_hl);
+                let hl_dest = dest_dir.join(stripped_hl);
+                let hl_cstr = path_to_cstring(&hl_dest)?;
+                ffi::archive_entry_set_hardlink(entry, hl_cstr.as_ptr());
             }
 
             let hdr_rc = ffi::archive_write_header(disk_writer.as_ptr(), entry);
@@ -1703,30 +1699,52 @@ unsafe fn describe_reader_format(reader: *mut ffi::archive) -> String {
     }
 }
 
-unsafe fn entry_pathname_string(entry: *mut ffi::archive_entry) -> Result<String, ArchiveError> {
-    let mut ptr = unsafe { ffi::archive_entry_pathname_utf8(entry) };
-    if ptr.is_null() {
-        ptr = unsafe { ffi::archive_entry_pathname(entry) };
+fn apply_strip_prefix(rel_path: &str, strip_prefix: Option<&str>) -> Option<String> {
+    if let Some(prefix) = strip_prefix.map(|p| p.trim_end_matches('/')).filter(|p| !p.is_empty()) {
+        let prefix_slash = format!("{prefix}/");
+        if let Some(stripped) = rel_path.strip_prefix(&prefix_slash) {
+            return Some(stripped.to_string());
+        } else if rel_path == prefix {
+            return None;
+        }
     }
-    if ptr.is_null() {
-        return Err(ArchiveError::LibArchive(
-            "Archive entry has unreadable filename".to_string(),
-        ));
-    }
-    Ok(unsafe { CStr::from_ptr(ptr) }
-        .to_string_lossy()
-        .into_owned())
+    Some(rel_path.to_string())
 }
 
-unsafe fn entry_symlink_string(entry: *mut ffi::archive_entry) -> Option<String> {
-    let mut ptr = unsafe { ffi::archive_entry_symlink_utf8(entry) };
-    if ptr.is_null() {
-        ptr = unsafe { ffi::archive_entry_symlink(entry) };
-    }
+unsafe fn utf8_or_local_cstr(utf8: *const c_char, fallback: *const c_char) -> Option<String> {
+    let ptr = if !utf8.is_null() { utf8 } else { fallback };
     if ptr.is_null() {
         None
     } else {
         Some(unsafe { CStr::from_ptr(ptr) }.to_string_lossy().into_owned())
+    }
+}
+
+unsafe fn entry_pathname_string(entry: *mut ffi::archive_entry) -> Result<String, ArchiveError> {
+    unsafe {
+        utf8_or_local_cstr(
+            ffi::archive_entry_pathname_utf8(entry),
+            ffi::archive_entry_pathname(entry),
+        )
+    }
+    .ok_or_else(|| ArchiveError::LibArchive("Archive entry has unreadable filename".to_string()))
+}
+
+unsafe fn entry_symlink_string(entry: *mut ffi::archive_entry) -> Option<String> {
+    unsafe {
+        utf8_or_local_cstr(
+            ffi::archive_entry_symlink_utf8(entry),
+            ffi::archive_entry_symlink(entry),
+        )
+    }
+}
+
+unsafe fn entry_hardlink_string(entry: *mut ffi::archive_entry) -> Option<String> {
+    unsafe {
+        utf8_or_local_cstr(
+            ffi::archive_entry_hardlink_utf8(entry),
+            ffi::archive_entry_hardlink(entry),
+        )
     }
 }
 
@@ -2043,6 +2061,7 @@ mod ffi {
         pub fn archive_entry_pathname_utf8(entry: *mut archive_entry) -> *const c_char;
         pub fn archive_entry_set_pathname(entry: *mut archive_entry, name: *const c_char);
         pub fn archive_entry_hardlink(entry: *mut archive_entry) -> *const c_char;
+        pub fn archive_entry_hardlink_utf8(entry: *mut archive_entry) -> *const c_char;
         pub fn archive_entry_set_hardlink(entry: *mut archive_entry, link: *const c_char);
         pub fn archive_entry_symlink(entry: *mut archive_entry) -> *const c_char;
         pub fn archive_entry_symlink_utf8(entry: *mut archive_entry) -> *const c_char;
@@ -2487,5 +2506,70 @@ mod tests {
         let listing = list_archive(&zip_path, None, None, &cancel).unwrap();
         assert!(listing.entries.iter().any(|e| e.path == "work/note.txt"));
         assert!(!listing.entries.iter().any(|e| e.path.ends_with("bundle.zip")));
+    }
+
+    #[test]
+    fn stripped_hardlink_extraction_succeeds() {
+        let tmp = TestDir::new("hardlink-strip");
+        let tar_path = tmp.0.join("links.tar");
+        let writer = WriteArchive::new().unwrap();
+        WritableSpec::Tar { filter: None }
+            .apply(writer.as_ptr(), None)
+            .unwrap();
+        let c_tar = path_to_cstring(&tar_path).unwrap();
+        unsafe {
+            check_read_write(
+                ffi::archive_write_open_filename(writer.as_ptr(), c_tar.as_ptr()),
+                writer.as_ptr(),
+            )
+            .unwrap();
+
+            let e1 = OwnedEntry::new().unwrap();
+            ffi::archive_entry_set_pathname(e1.as_ptr(), c"sub/orig.txt".as_ptr());
+            ffi::archive_entry_set_filetype(e1.as_ptr(), ffi::AE_IFREG);
+            ffi::archive_entry_set_perm(e1.as_ptr(), 0o644);
+            ffi::archive_entry_set_size(e1.as_ptr(), 5);
+            check_read_write(
+                ffi::archive_write_header(writer.as_ptr(), e1.as_ptr()),
+                writer.as_ptr(),
+            )
+            .unwrap();
+            assert_eq!(
+                ffi::archive_write_data(writer.as_ptr(), b"links".as_ptr() as *const c_void, 5),
+                5
+            );
+            check_read_write(ffi::archive_write_finish_entry(writer.as_ptr()), writer.as_ptr())
+                .unwrap();
+
+            let e2 = OwnedEntry::new().unwrap();
+            ffi::archive_entry_set_pathname(e2.as_ptr(), c"sub/alias.txt".as_ptr());
+            ffi::archive_entry_set_hardlink(e2.as_ptr(), c"sub/orig.txt".as_ptr());
+            ffi::archive_entry_set_filetype(e2.as_ptr(), ffi::AE_IFREG);
+            ffi::archive_entry_set_perm(e2.as_ptr(), 0o644);
+            check_read_write(
+                ffi::archive_write_header(writer.as_ptr(), e2.as_ptr()),
+                writer.as_ptr(),
+            )
+            .unwrap();
+            check_read_write(ffi::archive_write_finish_entry(writer.as_ptr()), writer.as_ptr())
+                .unwrap();
+        }
+        writer.close().unwrap();
+
+        let cancel = Arc::new(AtomicBool::new(false));
+        let dest = tmp.0.join("out");
+        let sel = vec!["sub/orig.txt".to_string(), "sub/alias.txt".to_string()];
+        extract_archive(
+            &tar_path,
+            &dest,
+            Some(&sel),
+            Some("sub"),
+            None,
+            None,
+            &cancel,
+        )
+        .unwrap();
+        assert_eq!(fs::read(dest.join("orig.txt")).unwrap(), b"links");
+        assert_eq!(fs::read(dest.join("alias.txt")).unwrap(), b"links");
     }
 }
