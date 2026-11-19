@@ -18,7 +18,7 @@ use crate::archive::{
     list_archive, spawn_worker, test_archive, ArchiveError, OperationSummary, WorkerEvent,
 };
 use crate::ui::dialogs::{run_worker_with_progress, show_create_dialog, show_properties_dialog};
-use crate::ui::{format_size, show_error_dialog, show_info_dialog};
+use crate::ui::{format_size, show_message_dialog};
 
 use actions::{
     activate_row, build_context_menu, install_context_actions, install_drag_out, install_drop_in,
@@ -374,7 +374,7 @@ fn run_viewer_worker<FWork, FOk>(
             }
             Err(ArchiveError::Cancelled) => {}
             Err(err) => {
-                show_error_dialog(Some(&win_err), error_title, &err.to_string());
+                show_message_dialog(Some(&win_err), error_title, &err.to_string());
             }
         },
     );
@@ -648,7 +648,7 @@ fn install_header_actions(
                         ..
                     } = summary
                     {
-                        show_info_dialog(
+                        show_message_dialog(
                             Some(&win_done),
                             "Integrity Check Passed",
                             &format!(

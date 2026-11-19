@@ -17,7 +17,7 @@ use crate::archive::{
     ArchiveError, ExtractSession, OperationSummary,
 };
 use crate::ui::dialogs::{run_worker_with_progress, show_create_dialog};
-use crate::ui::{select_folder_dialog, show_error_dialog};
+use crate::ui::{select_folder_dialog, show_message_dialog};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum TapAction {
@@ -186,7 +186,7 @@ fn run_tap_mode(app: &gtk::Application, action: TapAction, paths: Vec<PathBuf>) 
                 if let Err(err) = res
                     && !matches!(err, ArchiveError::Cancelled)
                 {
-                    show_error_dialog(None::<&gtk::Window>, "Extraction Failed", &err.to_string());
+                    show_message_dialog(None::<&gtk::Window>, "Extraction Failed", &err.to_string());
                 }
             });
         }
@@ -240,7 +240,7 @@ fn run_tap_mode(app: &gtk::Application, action: TapAction, paths: Vec<PathBuf>) 
                             if let Err(err) = res
                                 && !matches!(err, ArchiveError::Cancelled)
                             {
-                                show_error_dialog(
+                                show_message_dialog(
                                     None::<&gtk::Window>,
                                     "Extraction Failed",
                                     &err.to_string(),

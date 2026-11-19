@@ -10,7 +10,7 @@ updates over `async_channel`.
 
 | Path | Responsibility |
 |------|----------------|
-| [mod.rs](mod.rs) | CSS loader (`resources/style.css`), process-scoped `session_temp_dir` / `cleanup_session_temp_dir`, `format_size`, `format_mtime`, `show_error_dialog`, `show_info_dialog`, shared `select_folder_dialog`. |
+| [mod.rs](mod.rs) | CSS loader (`resources/style.css`), process-scoped `session_temp_dir` / `cleanup_session_temp_dir`, `format_size`, `format_mtime`, `show_message_dialog`, shared `select_folder_dialog`. |
 | [dialogs/mod.rs](dialogs/mod.rs) | `run_worker_with_progress` window + shared `run_modal_prompt` channel harness for `prompt_password_async` and `prompt_conflict_async`. |
 | [dialogs/create.rs](dialogs/create.rs) | `show_create_dialog` (enables password entry only for `.zip`, confirms overwrite via `gtk::AlertDialog` before `create_archive`). |
 | [dialogs/properties.rs](dialogs/properties.rs) | `show_properties_dialog` consuming `&[ArchiveEntry]` directly (single item, multi-selection summary, or archive metadata via `ArchivePropertiesInfo`). |

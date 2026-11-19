@@ -13,7 +13,7 @@ use crate::archive::{
     EntryKind, ExtractSession, OperationSummary,
 };
 use crate::ui::dialogs::{show_create_dialog, show_properties_dialog};
-use crate::ui::{select_folder_dialog, session_temp_dir, show_error_dialog, show_info_dialog};
+use crate::ui::{select_folder_dialog, session_temp_dir, show_message_dialog};
 
 use super::columns::{build_context_menu_model, CellRightClickFn};
 use super::models::{
@@ -334,7 +334,7 @@ pub(super) fn activate_row(
         return;
     }
     if is_symlink {
-        show_info_dialog(
+        show_message_dialog(
             Some(window),
             "Cannot Open Symbolic Link",
             "Symbolic links inside archives cannot be opened directly.",
@@ -394,7 +394,7 @@ pub(super) fn activate_row(
                     if let Err(e) = lres
                         && !is_user_dismissed_error(&e)
                     {
-                        show_error_dialog(Some(&win_err), "Unable to Launch File", e.message());
+                        show_message_dialog(Some(&win_err), "Unable to Launch File", e.message());
                     }
                 });
             }

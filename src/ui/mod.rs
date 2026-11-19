@@ -78,14 +78,6 @@ pub fn format_mtime(mtime: Option<i64>) -> String {
         .unwrap_or_else(|_| "—".to_string())
 }
 
-pub fn show_error_dialog(parent: Option<&impl IsA<gtk::Window>>, title: &str, detail: &str) {
-    show_message_dialog(parent, title, detail);
-}
-
-pub fn show_info_dialog(parent: Option<&impl IsA<gtk::Window>>, title: &str, detail: &str) {
-    show_message_dialog(parent, title, detail);
-}
-
 pub fn select_folder_dialog(
     parent: Option<&gtk::Window>,
     title: &str,
@@ -103,7 +95,7 @@ pub fn select_folder_dialog(
         });
 }
 
-fn show_message_dialog(parent: Option<&impl IsA<gtk::Window>>, title: &str, detail: &str) {
+pub fn show_message_dialog(parent: Option<&impl IsA<gtk::Window>>, title: &str, detail: &str) {
     let win = gtk::Window::builder()
         .title(title)
         .modal(true)
