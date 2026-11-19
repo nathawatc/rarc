@@ -22,19 +22,20 @@ use super::models::{
 };
 use super::run_viewer_worker;
 
+pub(super) struct ContextActions {
+    open: gio::SimpleAction,
+    open_with: gio::SimpleAction,
+    extract: gio::SimpleAction,
+    copy: gio::SimpleAction,
+    props: gio::SimpleAction,
+}
+
 pub(super) fn build_context_menu(
     window: &gtk::ApplicationWindow,
     column_view: &gtk::ColumnView,
     selection: &gtk::MultiSelection,
     state: &Rc<RefCell<ViewerState>>,
-) -> (
-    gio::SimpleAction,
-    gio::SimpleAction,
-    gio::SimpleAction,
-    gio::SimpleAction,
-    gio::SimpleAction,
-    CellRightClickFn,
-) {
+) -> (ContextActions, CellRightClickFn) {
     let item_actions = gio::SimpleActionGroup::new();
     let act_open = gio::SimpleAction::new("open", None);
     let act_open_with = gio::SimpleAction::new("open-with", None);
@@ -95,33 +96,30 @@ pub(super) fn build_context_menu(
     };
 
     (
-        act_open,
-        act_open_with,
-        act_extract,
-        act_copy,
-        act_props,
+        ContextActions {
+            open: act_open,
+            open_with: act_open_with,
+            extract: act_extract,
+            copy: act_copy,
+            props: act_props,
+        },
         show_context_menu,
     )
 }
 
-#[allow(clippy::too_many_arguments)]
 pub(super) fn install_context_actions(
     window: &gtk::ApplicationWindow,
     state: &Rc<RefCell<ViewerState>>,
     selection: &gtk::MultiSelection,
     navigate_to: &NavFn,
-    act_open: &gio::SimpleAction,
-    act_open_with: &gio::SimpleAction,
-    act_extract: &gio::SimpleAction,
-    act_copy: &gio::SimpleAction,
-    act_props: &gio::SimpleAction,
+    actions: &ContextActions,
 ) {
     {
         let win_ref = window.clone();
         let state_ref = state.clone();
         let selection_ref = selection.clone();
         let nav = navigate_to.clone();
-        act_open.connect_activate(move |_, _| {
+        actions.open.connect_activate(move |_, _| {
             let rows = collect_selected_rows(&selection_ref);
             if let Some(row) = rows.first() {
                 activate_row(&win_ref, &state_ref, row, false, &nav);
@@ -133,7 +131,7 @@ pub(super) fn install_context_actions(
         let state_ref = state.clone();
         let selection_ref = selection.clone();
         let nav = navigate_to.clone();
-        act_open_with.connect_activate(move |_, _| {
+        actions.open_with.connect_activate(move |_, _| {
             let rows = collect_selected_rows(&selection_ref);
             if let Some(row) = rows.first()
                 && !row.is_dir()
@@ -146,7 +144,7 @@ pub(super) fn install_context_actions(
         let win_ref = window.clone();
         let state_ref = state.clone();
         let selection_ref = selection.clone();
-        act_extract.connect_activate(move |_, _| {
+        actions.extract.connect_activate(move |_, _| {
             start_extract_dialog(&win_ref, &state_ref, &selection_ref, true);
         });
     }
@@ -154,7 +152,7 @@ pub(super) fn install_context_actions(
         let win_ref = window.clone();
         let state_ref = state.clone();
         let selection_ref = selection.clone();
-        act_copy.connect_activate(move |_, _| {
+        actions.copy.connect_activate(move |_, _| {
             copy_selected_to_clipboard(&win_ref, &state_ref, &selection_ref);
         });
     }
@@ -162,7 +160,7 @@ pub(super) fn install_context_actions(
         let win_ref = window.clone();
         let state_ref = state.clone();
         let selection_ref = selection.clone();
-        act_props.connect_activate(move |_, _| {
+        actions.props.connect_activate(move |_, _| {
             let Some(info) = state_ref.borrow().properties_info() else {
                 return;
             };

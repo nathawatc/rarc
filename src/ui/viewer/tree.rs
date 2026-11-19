@@ -10,16 +10,17 @@ use gtk::prelude::*;
 use super::models::{
     path_basename, refresh_visible_store, FolderTreeNode, NavFn, NavMode, NavWeak, ViewerState,
 };
+use super::ViewerWidgets;
 
-pub(super) fn build_tree_sidebar(
-    state: &Rc<RefCell<ViewerState>>,
-) -> (
-    gio::ListStore,
-    gtk::TreeListModel,
-    gtk::SingleSelection,
-    gtk::ListView,
-    gtk::ScrolledWindow,
-) {
+pub(super) struct TreeSidebar {
+    pub root_store: gio::ListStore,
+    pub model: gtk::TreeListModel,
+    pub selection: gtk::SingleSelection,
+    pub view: gtk::ListView,
+    pub scroll: gtk::ScrolledWindow,
+}
+
+pub(super) fn build_tree_sidebar(state: &Rc<RefCell<ViewerState>>) -> TreeSidebar {
     let tree_root_store = gio::ListStore::new::<FolderTreeNode>();
     let state_tree = state.clone();
     let tree_model = gtk::TreeListModel::new(tree_root_store.clone(), false, false, move |obj| {
@@ -145,30 +146,31 @@ pub(super) fn build_tree_sidebar(
         .build();
     tree_scroll.add_css_class("rarc-tree-sidebar");
 
-    (tree_root_store, tree_model, tree_selection, tree_view, tree_scroll)
+    TreeSidebar {
+        root_store: tree_root_store,
+        model: tree_model,
+        selection: tree_selection,
+        view: tree_view,
+        scroll: tree_scroll,
+    }
 }
 
-#[allow(clippy::too_many_arguments)]
 pub(super) fn make_navigate_to(
+    widgets: &ViewerWidgets,
     state: &Rc<RefCell<ViewerState>>,
-    crumbs_box: &gtk::Box,
-    up_btn: &gtk::Button,
     store: &gio::ListStore,
-    search_entry: &gtk::SearchEntry,
     selection: &gtk::MultiSelection,
-    tree_view: &gtk::ListView,
-    tree_model: &gtk::TreeListModel,
-    tree_selection: &gtk::SingleSelection,
+    tree: &TreeSidebar,
 ) -> NavFn {
     let state_ref = state.clone();
-    let crumbs_box = crumbs_box.clone();
-    let up_btn = up_btn.clone();
+    let crumbs_box = widgets.crumbs_box.clone();
+    let up_btn = widgets.up_btn.clone();
     let store_ref = store.clone();
-    let search_ref = search_entry.clone();
+    let search_ref = widgets.search_entry.clone();
     let selection_ref = selection.clone();
-    let tree_view_ref = tree_view.clone();
-    let tree_model_ref = tree_model.clone();
-    let tree_sel_ref = tree_selection.clone();
+    let tree_view_ref = tree.view.clone();
+    let tree_model_ref = tree.model.clone();
+    let tree_sel_ref = tree.selection.clone();
 
     Rc::new_cyclic(|nav_weak| {
         let nav_weak = nav_weak.clone();

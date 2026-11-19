@@ -31,6 +31,20 @@ use models::{
 };
 use tree::{build_tree_sidebar, install_thumb_buttons, make_navigate_to};
 
+#[derive(Clone)]
+pub(super) struct ViewerWidgets {
+    pub window: gtk::ApplicationWindow,
+    pub open_btn: gtk::Button,
+    pub new_btn: gtk::Button,
+    pub extract_btn: gtk::Button,
+    pub test_btn: gtk::Button,
+    pub props_btn: gtk::Button,
+    pub search_entry: gtk::SearchEntry,
+    pub up_btn: gtk::Button,
+    pub crumbs_box: gtk::Box,
+    pub stack: gtk::Stack,
+}
+
 struct ListPage {
     tree_root_store: gio::ListStore,
     tree_model: gtk::TreeListModel,
@@ -121,52 +135,32 @@ pub fn launch_standalone(app: &gtk::Application, initial_archive: Option<PathBuf
     root_box.append(&stack);
     window.set_child(Some(&root_box));
 
+    let widgets = ViewerWidgets {
+        window,
+        open_btn,
+        new_btn,
+        extract_btn,
+        test_btn,
+        props_btn,
+        search_entry,
+        up_btn,
+        crumbs_box,
+        stack,
+    };
+
     let list_page: Rc<OnceCell<ListPage>> = Rc::new(OnceCell::new());
+    let open_archive = make_open_archive(&widgets, &state, &list_page);
+    install_header_actions(&widgets, &state, &list_page, &open_archive);
+    install_drop_in(&widgets.window, &widgets.stack, &state, &open_archive);
 
-    let open_archive = make_open_archive(
-        &window,
-        &state,
-        &list_page,
-        &crumbs_box,
-        &up_btn,
-        &search_entry,
-        &stack,
-        &extract_btn,
-        &test_btn,
-        &props_btn,
-    );
-
-    install_header_actions(
-        &window,
-        &state,
-        &list_page,
-        &open_btn,
-        &new_btn,
-        &extract_btn,
-        &test_btn,
-        &props_btn,
-        &open_archive,
-    );
-
-    install_drop_in(&window, &stack, &state, &open_archive);
-
-    window.present();
+    widgets.window.present();
     if let Some(path) = initial_archive {
         open_archive(path);
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-fn build_list_page(
-    window: &gtk::ApplicationWindow,
-    state: &Rc<RefCell<ViewerState>>,
-    crumbs_box: &gtk::Box,
-    up_btn: &gtk::Button,
-    search_entry: &gtk::SearchEntry,
-    stack: &gtk::Stack,
-) -> ListPage {
-    let (tree_root_store, tree_model, tree_selection, tree_view, tree_scroll) =
-        build_tree_sidebar(state);
+fn build_list_page(widgets: &ViewerWidgets, state: &Rc<RefCell<ViewerState>>) -> ListPage {
+    let tree = build_tree_sidebar(state);
 
     // ColumnView data pipeline (store holds only the currently visible directory or search results)
     let store = gio::ListStore::new::<ArchiveRowObject>();
@@ -180,8 +174,8 @@ fn build_list_page(
     let sort_model = gtk::SortListModel::new(Some(store.clone()), column_view.sorter());
     let selection = gtk::MultiSelection::new(Some(sort_model));
 
-    let (act_open, act_open_with, act_extract, act_copy, act_props, show_context_menu) =
-        build_context_menu(window, &column_view, &selection, state);
+    let (ctx_actions, show_context_menu) =
+        build_context_menu(&widgets.window, &column_view, &selection, state);
 
     append_columns(&column_view);
     column_view.set_model(Some(&selection));
@@ -207,7 +201,7 @@ fn build_list_page(
 
     let paned = gtk::Paned::builder()
         .orientation(gtk::Orientation::Horizontal)
-        .start_child(&tree_scroll)
+        .start_child(&tree.scroll)
         .end_child(&scrolled)
         .position(230)
         .resize_start_child(false)
@@ -216,27 +210,17 @@ fn build_list_page(
         .vexpand(true)
         .hexpand(true)
         .build();
-    stack.add_named(&paned, Some("list"));
+    widgets.stack.add_named(&paned, Some("list"));
 
-    let navigate_to = make_navigate_to(
-        state,
-        crumbs_box,
-        up_btn,
-        &store,
-        search_entry,
-        &selection,
-        &tree_view,
-        &tree_model,
-        &tree_selection,
-    );
+    let navigate_to = make_navigate_to(widgets, state, &store, &selection, &tree);
 
-    install_thumb_buttons(window, state, &navigate_to);
+    install_thumb_buttons(&widgets.window, state, &navigate_to);
 
     // Left tree selection listener
     {
         let state_ref = state.clone();
         let nav = navigate_to.clone();
-        tree_selection.connect_selected_item_notify(move |sel| {
+        tree.selection.connect_selected_item_notify(move |sel| {
             if state_ref.borrow().syncing_tree {
                 return;
             }
@@ -256,7 +240,7 @@ fn build_list_page(
     {
         let state_ref = state.clone();
         let nav = navigate_to.clone();
-        up_btn.connect_clicked(move |_| {
+        widgets.up_btn.connect_clicked(move |_| {
             let next = {
                 let st = state_ref.borrow();
                 if let Some((parent, _)) = st.current_dir.rsplit_once('/') {
@@ -273,7 +257,7 @@ fn build_list_page(
     {
         let state_ref = state.clone();
         let store_ref = store.clone();
-        search_entry.connect_search_changed(move |entry| {
+        widgets.search_entry.connect_search_changed(move |entry| {
             let query = entry.text().trim().to_ascii_lowercase();
             let changed = {
                 let mut st = state_ref.borrow_mut();
@@ -290,24 +274,14 @@ fn build_list_page(
         });
     }
 
-    install_context_actions(
-        window,
-        state,
-        &selection,
-        &navigate_to,
-        &act_open,
-        &act_open_with,
-        &act_extract,
-        &act_copy,
-        &act_props,
-    );
+    install_context_actions(&widgets.window, state, &selection, &navigate_to, &ctx_actions);
 
     // Double-click activation: enter directory or extract & launch file
     {
         let state_ref = state.clone();
         let selection_ref = selection.clone();
         let nav = navigate_to.clone();
-        let win_ref = window.clone();
+        let win_ref = widgets.window.clone();
         column_view.connect_activate(move |_, pos| {
             let Some(item) = selection_ref.item(pos) else {
                 return;
@@ -319,11 +293,11 @@ fn build_list_page(
         });
     }
 
-    install_drag_out(window, &column_view, state, &selection);
+    install_drag_out(&widgets.window, &column_view, state, &selection);
 
     ListPage {
-        tree_root_store,
-        tree_model,
+        tree_root_store: tree.root_store,
+        tree_model: tree.model,
         selection,
         navigate_to,
     }
@@ -405,29 +379,14 @@ fn build_empty_stack() -> gtk::Stack {
     stack
 }
 
-#[allow(clippy::too_many_arguments)]
 fn make_open_archive(
-    window: &gtk::ApplicationWindow,
+    widgets: &ViewerWidgets,
     state: &Rc<RefCell<ViewerState>>,
     list_page: &Rc<OnceCell<ListPage>>,
-    crumbs_box: &gtk::Box,
-    up_btn: &gtk::Button,
-    search_entry: &gtk::SearchEntry,
-    stack: &gtk::Stack,
-    extract_btn: &gtk::Button,
-    test_btn: &gtk::Button,
-    props_btn: &gtk::Button,
 ) -> Rc<dyn Fn(PathBuf)> {
-    let window_ref = window.clone();
+    let widgets_ref = widgets.clone();
     let state_ref = state.clone();
     let list_page_ref = list_page.clone();
-    let crumbs_ref = crumbs_box.clone();
-    let up_ref = up_btn.clone();
-    let search_ref = search_entry.clone();
-    let stack_ref = stack.clone();
-    let extract_ref = extract_btn.clone();
-    let test_ref = test_btn.clone();
-    let props_ref = props_btn.clone();
 
     Rc::new(move |archive_path: PathBuf| {
         let initial_pw = {
@@ -448,19 +407,12 @@ fn make_open_archive(
                 .unwrap_or("archive")
         );
 
-        let win_done = window_ref.clone();
+        let w_done = widgets_ref.clone();
         let st_done = state_ref.clone();
         let list_page_done = list_page_ref.clone();
-        let crumbs_done = crumbs_ref.clone();
-        let up_done = up_ref.clone();
-        let search_done = search_ref.clone();
-        let stack_done = stack_ref.clone();
-        let extract_done = extract_ref.clone();
-        let test_done = test_ref.clone();
-        let props_done = props_ref.clone();
 
         run_viewer_worker(
-            &window_ref,
+            &widgets_ref.window,
             &state_ref,
             None,
             &title,
@@ -507,27 +459,18 @@ fn make_open_archive(
                         (st.current_dir.clone(), mode)
                     };
 
-                    let lp = list_page_done.get_or_init(|| {
-                        build_list_page(
-                            &win_done,
-                            &st_done,
-                            &crumbs_done,
-                            &up_done,
-                            &search_done,
-                            &stack_done,
-                        )
-                    });
+                    let lp = list_page_done.get_or_init(|| build_list_page(&w_done, &st_done));
                     lp.tree_root_store
                         .splice(0, lp.tree_root_store.n_items(), &[root_node]);
                     if let Some(first_row) = lp.tree_model.row(0) {
                         first_row.set_expanded(true);
                     }
 
-                    win_done.set_title(Some(&format!("{archive_name} - rarc")));
-                    extract_done.set_sensitive(true);
-                    test_done.set_sensitive(true);
-                    props_done.set_sensitive(true);
-                    stack_done.set_visible_child_name("list");
+                    w_done.window.set_title(Some(&format!("{archive_name} - rarc")));
+                    w_done.extract_btn.set_sensitive(true);
+                    w_done.test_btn.set_sensitive(true);
+                    w_done.props_btn.set_sensitive(true);
+                    w_done.stack.set_visible_child_name("list");
                     (lp.navigate_to)(target_dir, true, nav_mode);
                     trim_glibc_heap();
                 }
@@ -549,22 +492,16 @@ fn trim_glibc_heap() {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 fn install_header_actions(
-    window: &gtk::ApplicationWindow,
+    widgets: &ViewerWidgets,
     state: &Rc<RefCell<ViewerState>>,
     list_page: &Rc<OnceCell<ListPage>>,
-    open_btn: &gtk::Button,
-    new_btn: &gtk::Button,
-    extract_btn: &gtk::Button,
-    test_btn: &gtk::Button,
-    props_btn: &gtk::Button,
     open_archive: &Rc<dyn Fn(PathBuf)>,
 ) {
     {
-        let win_ref = window.clone();
+        let win_ref = widgets.window.clone();
         let open_fn = open_archive.clone();
-        open_btn.connect_clicked(move |_| {
+        widgets.open_btn.connect_clicked(move |_| {
             let dialog = gtk::FileDialog::builder().title("Open Archive").build();
             let open_fn = open_fn.clone();
             dialog.open(Some(&win_ref), gio::Cancellable::NONE, move |res| {
@@ -577,9 +514,9 @@ fn install_header_actions(
         });
     }
     {
-        let win_ref = window.clone();
+        let win_ref = widgets.window.clone();
         let open_fn = open_archive.clone();
-        new_btn.connect_clicked(move |_| {
+        widgets.new_btn.connect_clicked(move |_| {
             let open_fn = open_fn.clone();
             show_create_dialog(
                 None,
@@ -595,19 +532,19 @@ fn install_header_actions(
         });
     }
     {
-        let win_ref = window.clone();
+        let win_ref = widgets.window.clone();
         let state_ref = state.clone();
         let lp_ref = list_page.clone();
-        extract_btn.connect_clicked(move |_| {
+        widgets.extract_btn.connect_clicked(move |_| {
             if let Some(lp) = lp_ref.get() {
                 start_extract_dialog(&win_ref, &state_ref, &lp.selection, false);
             }
         });
     }
     {
-        let win_ref = window.clone();
+        let win_ref = widgets.window.clone();
         let state_ref = state.clone();
-        test_btn.connect_clicked(move |_| {
+        widgets.test_btn.connect_clicked(move |_| {
             let (Some(archive_path), cached_pw, total_uncompressed, is_raw) = ({
                 let st = state_ref.borrow();
                 (
@@ -662,9 +599,9 @@ fn install_header_actions(
         });
     }
     {
-        let win_ref = window.clone();
+        let win_ref = widgets.window.clone();
         let state_ref = state.clone();
-        props_btn.connect_clicked(move |_| {
+        widgets.props_btn.connect_clicked(move |_| {
             if let Some(info) = state_ref.borrow().properties_info() {
                 show_properties_dialog(win_ref.upcast_ref(), &[], &info);
             }
