@@ -120,7 +120,10 @@ pub enum OperationSummary {
         password: Option<String>,
     },
     Created(PathBuf),
-    Added(PathBuf),
+    Added {
+        path: PathBuf,
+        password: Option<String>,
+    },
 }
 
 #[derive(Debug)]
@@ -918,16 +921,36 @@ pub fn add_to_archive(
     initial_password: Option<&str>,
     event_tx: Option<&Sender<WorkerEvent>>,
     cancel: &Arc<AtomicBool>,
-) -> Result<usize, ArchiveError> {
+) -> Result<(usize, Option<String>), ArchiveError> {
     if inputs.is_empty() {
-        return Ok(0);
+        return Ok((0, initial_password.map(ToOwned::to_owned)));
     }
     let disk_items = collect_disk_items(inputs, dest_subdir)?;
     let replace_set: HashSet<String> = disk_items.iter().map(|d| d.archive_path.clone()).collect();
     let new_bytes: u64 = disk_items.iter().map(|i| i.size).sum();
 
     let listing = list_archive(archive_path, initial_password, event_tx, cancel)?;
-    let cached_pw = listing.password;
+    let has_encrypted = listing.entries.iter().any(|e| e.is_encrypted);
+    let mut effective_pw = listing
+        .password
+        .or_else(|| initial_password.filter(|p| !p.is_empty()).map(ToOwned::to_owned));
+    if has_encrypted && effective_pw.is_none() {
+        let mut probe_ctx = PassphraseCtx::new(
+            archive_path
+                .file_name()
+                .and_then(|s| s.to_str())
+                .unwrap_or("archive")
+                .to_string(),
+            None,
+            event_tx.cloned(),
+            cancel.clone(),
+        );
+        effective_pw = probe_encrypted_password(archive_path, &mut probe_ctx, cancel)?;
+        if effective_pw.is_none() {
+            return Err(ArchiveError::PasswordRequired);
+        }
+    }
+
     let existing_bytes: u64 = listing
         .entries
         .iter()
@@ -942,7 +965,7 @@ pub fn add_to_archive(
             .and_then(|s| s.to_str())
             .unwrap_or("archive")
             .to_string(),
-        cached_pw.as_deref().or(initial_password),
+        effective_pw.as_deref(),
         event_tx.cloned(),
         cancel.clone(),
     );
@@ -965,7 +988,7 @@ pub fn add_to_archive(
                 if rc == ffi::ARCHIVE_EOF {
                     if first {
                         let spec = infer_writable_from_extension(archive_path)?;
-                        spec.apply(writer.as_ptr(), cached_pw.as_deref())?;
+                        spec.apply(writer.as_ptr(), effective_pw.as_deref())?;
                         let tmp_cstr = path_to_cstring(&tmp_path)?;
                         check_read_write(
                             ffi::archive_write_open_filename(writer.as_ptr(), tmp_cstr.as_ptr()),
@@ -984,7 +1007,7 @@ pub fn add_to_archive(
                     let fmt = ffi::archive_format(reader.as_ptr());
                     let flt = ffi::archive_filter_code(reader.as_ptr(), 0);
                     let spec = WritableSpec::from_detected(fmt, flt)?;
-                    spec.apply(writer.as_ptr(), cached_pw.as_deref())?;
+                    spec.apply(writer.as_ptr(), effective_pw.as_deref())?;
                     let tmp_cstr = path_to_cstring(&tmp_path)?;
                     check_read_write(
                         ffi::archive_write_open_filename(writer.as_ptr(), tmp_cstr.as_ptr()),
@@ -1063,7 +1086,56 @@ pub fn add_to_archive(
 
     writer.close()?;
     fs::rename(&tmp_path, archive_path)?;
-    Ok(disk_items.len())
+    Ok((disk_items.len(), pass_ctx.last_password().or(effective_pw)))
+}
+
+fn probe_encrypted_password(
+    archive_path: &Path,
+    pass_ctx: &mut PassphraseCtx,
+    cancel: &Arc<AtomicBool>,
+) -> Result<Option<String>, ArchiveError> {
+    let probe = open_reader(archive_path, false, pass_ctx)?;
+    unsafe {
+        let mut entry: *mut ffi::archive_entry = ptr::null_mut();
+        let mut first = true;
+        loop {
+            if cancel.load(Ordering::Relaxed) {
+                return Err(ArchiveError::Cancelled);
+            }
+            let rc = ffi::archive_read_next_header(probe.as_ptr(), &mut entry);
+            if rc == ffi::ARCHIVE_EOF {
+                break;
+            }
+            if rc != ffi::ARCHIVE_OK && rc != ffi::ARCHIVE_WARN {
+                return Err(reader_error(probe.as_ptr(), pass_ctx));
+            }
+            if first {
+                first = false;
+                let fmt = ffi::archive_format(probe.as_ptr());
+                let flt = ffi::archive_filter_code(probe.as_ptr(), 0);
+                let spec = WritableSpec::from_detected(fmt, flt)?;
+                if !matches!(spec, WritableSpec::Zip) {
+                    return Err(ArchiveError::UnsupportedFormat(
+                        "modifying encrypted non-ZIP archives is not supported".to_string(),
+                    ));
+                }
+            }
+            let is_dir = (ffi::archive_entry_filetype(entry) & ffi::AE_IFMT) == ffi::AE_IFDIR;
+            if !is_dir && ffi::archive_entry_is_encrypted(entry) != 0 {
+                let mut buf: *const c_void = ptr::null();
+                let mut size: usize = 0;
+                let mut offset: i64 = 0;
+                let drc =
+                    ffi::archive_read_data_block(probe.as_ptr(), &mut buf, &mut size, &mut offset);
+                if drc != ffi::ARCHIVE_OK && drc != ffi::ARCHIVE_WARN && drc != ffi::ARCHIVE_EOF {
+                    return Err(reader_error(probe.as_ptr(), pass_ctx));
+                }
+                break;
+            }
+            let _ = ffi::archive_read_data_skip(probe.as_ptr());
+        }
+    }
+    Ok(pass_ctx.last_password())
 }
 
 fn infer_writable_from_extension(path: &Path) -> Result<WritableSpec, ArchiveError> {
@@ -2299,5 +2371,86 @@ mod tests {
         let corrupt_zip = tmp.0.join("corrupt.zip");
         fs::write(&corrupt_zip, raw).unwrap();
         assert!(test_archive(&corrupt_zip, None, None, &cancel).is_err());
+    }
+
+    #[test]
+    fn encrypted_zip_add_preserves_encryption() {
+        let tmp = TestDir::new("enc-add");
+        let secret = tmp.0.join("secret.txt");
+        let extra = tmp.0.join("extra.txt");
+        fs::write(&secret, b"confidential").unwrap();
+        fs::write(&extra, b"added later").unwrap();
+
+        let cancel = Arc::new(AtomicBool::new(false));
+        let zip_path = tmp.0.join("locked.zip");
+        create_archive(
+            &zip_path,
+            ArchiveFormat::Zip,
+            &[secret],
+            Some("hunter2"),
+            None,
+            &cancel,
+        )
+        .unwrap();
+
+        // Without passphrase or prompt channel, add_to_archive must fail rather than downgrade.
+        let err = add_to_archive(
+            &zip_path,
+            std::slice::from_ref(&extra),
+            "",
+            None,
+            None,
+            &cancel,
+        )
+        .unwrap_err();
+        assert!(matches!(err, ArchiveError::PasswordRequired));
+
+        // With interactive prompt (simulating Drag-and-Drop before password is cached),
+        // add_to_archive re-encrypts both existing and newly added entries.
+        let (tx, rx) = async_channel::unbounded();
+        let z = zip_path.clone();
+        let e = extra.clone();
+        let c = cancel.clone();
+        let handle = std::thread::spawn(move || {
+            let res = add_to_archive(&z, &[e], "", None, Some(&tx), &c);
+            let _ = tx.send_blocking(WorkerEvent::Finished(
+                res.map(|(_, pw)| OperationSummary::Added {
+                    path: z,
+                    password: pw,
+                }),
+            ));
+        });
+        while let Ok(ev) = rx.recv_blocking() {
+            match ev {
+                WorkerEvent::NeedPassword { reply, .. } => {
+                    let _ = reply.send_blocking(Some("hunter2".to_string()));
+                }
+                WorkerEvent::Finished(Ok(OperationSummary::Added { password, .. })) => {
+                    assert_eq!(password.as_deref(), Some("hunter2"));
+                    break;
+                }
+                WorkerEvent::Finished(res) => panic!("unexpected result: {res:?}"),
+                _ => {}
+            }
+        }
+        handle.join().unwrap();
+
+        let listing = list_archive(&zip_path, None, None, &cancel).unwrap();
+        assert!(listing.entries.iter().all(|ent| ent.is_encrypted));
+
+        let out_dir = tmp.0.join("out");
+        assert!(extract_archive(&zip_path, &out_dir, None, None, None, None, &cancel).is_err());
+        extract_archive(
+            &zip_path,
+            &out_dir,
+            None,
+            None,
+            Some("hunter2"),
+            None,
+            &cancel,
+        )
+        .unwrap();
+        assert_eq!(fs::read(out_dir.join("secret.txt")).unwrap(), b"confidential");
+        assert_eq!(fs::read(out_dir.join("extra.txt")).unwrap(), b"added later");
     }
 }

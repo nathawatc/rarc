@@ -1171,7 +1171,7 @@ pub fn launch_standalone(app: &gtk::Application, initial_archive: Option<PathBuf
                 let cancel_worker = cancel.clone();
                 let arch_worker = arch_path.clone();
                 let rx = spawn_worker(move |tx| {
-                    add_to_archive(
+                    let (_, password) = add_to_archive(
                         &arch_worker,
                         &paths,
                         &dest_subdir,
@@ -1179,9 +1179,13 @@ pub fn launch_standalone(app: &gtk::Application, initial_archive: Option<PathBuf
                         Some(tx),
                         &cancel_worker,
                     )?;
-                    Ok(OperationSummary::Added(arch_worker))
+                    Ok(OperationSummary::Added {
+                        path: arch_worker,
+                        password,
+                    })
                 });
                 let win_err = win_ref.clone();
+                let st_added = state_ref.clone();
                 let reload = open_fn.clone();
                 run_worker_with_progress(
                     None,
@@ -1190,7 +1194,12 @@ pub fn launch_standalone(app: &gtk::Application, initial_archive: Option<PathBuf
                     rx,
                     cancel,
                     move |res| match res {
-                        Ok(OperationSummary::Added(archive_path)) => reload(archive_path),
+                        Ok(OperationSummary::Added { path, password }) => {
+                            if let Some(pw) = password {
+                                st_added.borrow_mut().cached_password = Some(pw);
+                            }
+                            reload(path);
+                        }
                         Ok(_) | Err(ArchiveError::Cancelled) => {}
                         Err(err) => {
                             show_error_dialog(
