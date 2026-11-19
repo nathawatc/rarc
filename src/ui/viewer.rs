@@ -90,6 +90,7 @@ mod imp {
         pub selected_paths: RefCell<Vec<String>>,
         pub strip_prefix: RefCell<Option<String>>,
         pub password: RefCell<Option<String>>,
+        pub(super) state: RefCell<std::rc::Weak<RefCell<ViewerState>>>,
         pub window: glib::WeakRef<gtk::Window>,
         pub seq: Cell<u64>,
     }
@@ -122,6 +123,7 @@ mod imp {
             let selected = self.selected_paths.borrow().clone();
             let strip_prefix = self.strip_prefix.borrow().clone();
             let password = self.password.borrow().clone();
+            let state_weak = self.state.borrow().clone();
             let window = self.window.upgrade();
             let seq = self.seq.get().wrapping_add(1);
             self.seq.set(seq);
@@ -143,6 +145,7 @@ mod imp {
                 let cancel = Arc::new(AtomicBool::new(false));
                 let cancel_worker = cancel.clone();
 
+                let archive_for_state = archive_path.clone();
                 let strip_worker = strip_prefix.clone();
                 let rx = spawn_worker(move |tx| {
                     let (_, pw) = extract_archive(
@@ -173,6 +176,17 @@ mod imp {
                         }
                         WorkerEvent::FileConflict { reply, .. } => {
                             let _ = reply.send(ConflictResolution::OverwriteAll).await;
+                        }
+                        WorkerEvent::Finished(Ok(OperationSummary::Extracted {
+                            password: Some(pw),
+                        })) => {
+                            if let Some(state_rc) = state_weak.upgrade() {
+                                let mut st = state_rc.borrow_mut();
+                                if st.current_archive.as_ref() == Some(&archive_for_state) {
+                                    st.cached_password = Some(pw);
+                                }
+                            }
+                            break;
                         }
                         WorkerEvent::Finished(Ok(_)) => break,
                         WorkerEvent::Finished(Err(err)) => {
@@ -272,6 +286,7 @@ impl ArchiveDragProvider {
         selected_paths: Vec<String>,
         strip_prefix: Option<String>,
         password: Option<String>,
+        state: std::rc::Weak<RefCell<ViewerState>>,
         window: &gtk::Window,
     ) -> Self {
         let obj: Self = glib::Object::new();
@@ -280,6 +295,7 @@ impl ArchiveDragProvider {
         *imp.selected_paths.borrow_mut() = selected_paths;
         *imp.strip_prefix.borrow_mut() = strip_prefix;
         *imp.password.borrow_mut() = password;
+        *imp.state.borrow_mut() = state;
         imp.window.set(Some(window));
         obj
     }
@@ -582,7 +598,8 @@ pub fn launch_standalone(app: &gtk::Application, initial_archive: Option<PathBuf
 
             let selected_rows = collect_selected_rows(&selection_ref);
             let count = selected_rows.len();
-            let single_file = count == 1 && !selected_rows[0].with_data(|d| d.is_dir);
+            let single_file = count == 1
+                && !selected_rows[0].with_data(|d| d.is_dir || d.symlink_target.is_some());
             act_open.set_enabled(count == 1);
             act_open_with.set_enabled(single_file);
             act_extract.set_enabled(count > 0);
@@ -1003,7 +1020,7 @@ pub fn launch_standalone(app: &gtk::Application, initial_archive: Option<PathBuf
             let state_done = state_ref.clone();
             run_worker_with_progress(
                 None,
-                Some(window_upcast(&win_ref)),
+                Some(win_ref.upcast_ref()),
                 "Testing Archive Integrity",
                 rx,
                 cancel,
@@ -1258,6 +1275,7 @@ pub fn launch_standalone(app: &gtk::Application, initial_archive: Option<PathBuf
                 selected,
                 strip,
                 st.cached_password.clone(),
+                Rc::downgrade(&state_ref),
                 win_ref.upcast_ref(),
             );
             Some(provider.upcast())
@@ -1279,10 +1297,6 @@ fn archive_properties_info(st: &ViewerState) -> Option<ArchivePropertiesInfo> {
         total_uncompressed: st.total_uncompressed,
         encrypted_count: st.encrypted_count,
     })
-}
-
-fn window_upcast(win: &gtk::ApplicationWindow) -> &gtk::Window {
-    win.upcast_ref()
 }
 
 fn build_context_menu_model() -> gio::Menu {
@@ -1312,9 +1326,10 @@ fn activate_row(
     always_ask: bool,
     navigate_to: &NavFn,
 ) {
-    let (is_dir, full_path, name, parent_dir) = row.with_data(|d| {
+    let (is_dir, is_symlink, full_path, name, parent_dir) = row.with_data(|d| {
         (
             d.is_dir,
+            d.symlink_target.is_some() || d.type_label == "Symbolic Link",
             d.full_path.clone(),
             d.name.clone(),
             d.parent_dir.clone(),
@@ -1323,6 +1338,14 @@ fn activate_row(
 
     if is_dir {
         navigate_to(full_path, true, NavMode::Push);
+        return;
+    }
+    if is_symlink {
+        show_info_dialog(
+            Some(window),
+            "Cannot Open Symbolic Link",
+            "Symbolic links inside archives cannot be opened directly.",
+        );
         return;
     }
 
