@@ -13,15 +13,15 @@ cd "$folder" || exit 1
 
 case "$action" in
 	create)
-		exec rarc --tap create "$@"
+		exec rarc --tap create -- "$@"
 		;;
 
 	extract-here)
-		exec rarc --tap extract-here "$@"
+		exec rarc --tap extract-here -- "$@"
 		;;
 
 	extract-to)
-		exec rarc --tap extract-to "$@"
+		exec rarc --tap extract-to -- "$@"
 		;;
 
 	*)

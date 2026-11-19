@@ -284,6 +284,13 @@ mod tests {
                 vec![PathBuf::from("a.zip"), PathBuf::from("b.zip")],
             )
         );
+        assert_eq!(
+            parse_args_from(["rarc", "--tap", "extract-here", "--", "-a.zip", "--help"]).unwrap(),
+            AppMode::Tap(
+                TapAction::ExtractHere,
+                vec![PathBuf::from("-a.zip"), PathBuf::from("--help")],
+            )
+        );
         assert!(parse_args_from(["rarc", "--tap", "bogus", "a.zip"]).is_err());
         assert!(parse_args_from(["rarc", "--tap", "create"]).is_err());
         assert!(parse_args_from(["rarc", "a.zip", "b.zip"]).is_err());
