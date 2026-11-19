@@ -81,8 +81,8 @@ pub(super) fn build_context_menu(
             let selected_rows = collect_selected_rows(&selection_ref);
             let count = selected_rows.len();
             let single_file = count == 1
-                && !selected_rows[0]
-                    .with_data(|d| d.is_dir() || d.entry.kind == EntryKind::Symlink);
+                && !(selected_rows[0].is_dir()
+                    || selected_rows[0].entry_ref().kind == EntryKind::Symlink);
             act_open.set_enabled(count == 1);
             act_open_with.set_enabled(single_file);
             act_extract.set_enabled(count > 0);
@@ -115,7 +115,6 @@ pub(super) fn build_context_menu(
 pub(super) fn install_context_actions(
     window: &gtk::ApplicationWindow,
     state: &Rc<RefCell<ViewerState>>,
-    store: &gio::ListStore,
     selection: &gtk::MultiSelection,
     navigate_to: &NavFn,
     act_open: &gio::SimpleAction,
@@ -144,7 +143,7 @@ pub(super) fn install_context_actions(
         act_open_with.connect_activate(move |_, _| {
             let rows = collect_selected_rows(&selection_ref);
             if let Some(row) = rows.first()
-                && !row.with_data(|d| d.is_dir())
+                && !row.is_dir()
             {
                 activate_row(&win_ref, &state_ref, row, true, &nav);
             }
@@ -153,19 +152,17 @@ pub(super) fn install_context_actions(
     {
         let win_ref = window.clone();
         let state_ref = state.clone();
-        let store_ref = store.clone();
         let selection_ref = selection.clone();
         act_extract.connect_activate(move |_, _| {
-            start_extract_dialog(&win_ref, &state_ref, &store_ref, &selection_ref, true);
+            start_extract_dialog(&win_ref, &state_ref, &selection_ref, true);
         });
     }
     {
         let win_ref = window.clone();
         let state_ref = state.clone();
-        let store_ref = store.clone();
         let selection_ref = selection.clone();
         act_copy.connect_activate(move |_, _| {
-            copy_selected_to_clipboard(&win_ref, &state_ref, &store_ref, &selection_ref);
+            copy_selected_to_clipboard(&win_ref, &state_ref, &selection_ref);
         });
     }
     {
@@ -192,7 +189,6 @@ pub(super) fn install_dnd(
     stack: &gtk::Stack,
     column_view: &gtk::ColumnView,
     state: &Rc<RefCell<ViewerState>>,
-    store: &gio::ListStore,
     selection: &gtk::MultiSelection,
     open_archive: &Rc<dyn Fn(PathBuf)>,
 ) {
@@ -293,7 +289,6 @@ pub(super) fn install_dnd(
             .actions(gdk::DragAction::COPY)
             .build();
         let state_ref = state.clone();
-        let store_ref = store.clone();
         let selection_ref = selection.clone();
         let win_ref = window.clone();
         drag_source.connect_prepare(move |_, _, _| {
@@ -303,7 +298,7 @@ pub(super) fn install_dnd(
             if selected.is_empty() {
                 return None;
             }
-            let total_bytes = compute_selected_bytes(&store_ref, Some(&selected));
+            let total_bytes = compute_selected_bytes(&st.entries, Some(&selected));
             let strip = st.active_strip_prefix();
             let provider = ArchiveDragProvider::new(
                 arch.clone(),
@@ -328,16 +323,13 @@ pub(super) fn activate_row(
     always_ask: bool,
     navigate_to: &NavFn,
 ) {
-    let (is_dir, is_symlink, full_path, name, parent_dir, entry_size) = row.with_data(|d| {
-        (
-            d.is_dir(),
-            d.entry.kind == EntryKind::Symlink,
-            d.entry.path.clone(),
-            d.name.clone(),
-            d.parent_dir.clone(),
-            d.entry.size,
-        )
-    });
+    let entry = row.entry_ref();
+    let is_dir = row.is_dir();
+    let is_symlink = entry.kind == EntryKind::Symlink;
+    let full_path = entry.path.clone();
+    let name = row.name().to_string();
+    let parent_dir = row.parent_dir().to_string();
+    let entry_size = entry.size;
 
     if is_dir {
         navigate_to(full_path, true, NavMode::Push);
@@ -422,7 +414,6 @@ fn is_user_dismissed_error(err: &glib::Error) -> bool {
 pub(super) fn start_extract_dialog(
     window: &gtk::ApplicationWindow,
     state: &Rc<RefCell<ViewerState>>,
-    store: &gio::ListStore,
     selection: &gtk::MultiSelection,
     require_selection: bool,
 ) {
@@ -446,7 +437,7 @@ pub(super) fn start_extract_dialog(
             None
         };
         let bytes = if selected_opt.is_some() {
-            compute_selected_bytes(store, selected_opt.as_deref())
+            compute_selected_bytes(&st.entries, selected_opt.as_deref())
         } else {
             st.total_uncompressed
         };
@@ -497,7 +488,6 @@ pub(super) fn start_extract_dialog(
 fn copy_selected_to_clipboard(
     window: &gtk::ApplicationWindow,
     state: &Rc<RefCell<ViewerState>>,
-    store: &gio::ListStore,
     selection: &gtk::MultiSelection,
 ) {
     let Some(archive_path) = state.borrow().current_archive.clone() else {
@@ -512,7 +502,7 @@ fn copy_selected_to_clipboard(
         let mut st = state.borrow_mut();
         st.stage_seq += 1;
         let strip = st.active_strip_prefix();
-        let bytes = compute_selected_bytes(store, Some(&selected));
+        let bytes = compute_selected_bytes(&st.entries, Some(&selected));
         (
             st.stage_seq,
             strip,

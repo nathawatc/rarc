@@ -7,7 +7,9 @@ use gtk::gio;
 use gtk::glib;
 use gtk::prelude::*;
 
-use super::models::{path_basename, FolderTreeNode, NavFn, NavMode, NavWeak, ViewerState};
+use super::models::{
+    path_basename, refresh_visible_store, FolderTreeNode, NavFn, NavMode, NavWeak, ViewerState,
+};
 
 pub(super) fn build_tree_sidebar(
     state: &Rc<RefCell<ViewerState>>,
@@ -151,7 +153,7 @@ pub(super) fn make_navigate_to(
     state: &Rc<RefCell<ViewerState>>,
     crumbs_box: &gtk::Box,
     up_btn: &gtk::Button,
-    filter: &gtk::CustomFilter,
+    store: &gio::ListStore,
     search_entry: &gtk::SearchEntry,
     selection: &gtk::MultiSelection,
     tree_view: &gtk::ListView,
@@ -161,7 +163,7 @@ pub(super) fn make_navigate_to(
     let state_ref = state.clone();
     let crumbs_box = crumbs_box.clone();
     let up_btn = up_btn.clone();
-    let filter_ref = filter.clone();
+    let store_ref = store.clone();
     let search_ref = search_entry.clone();
     let selection_ref = selection.clone();
     let tree_view_ref = tree_view.clone();
@@ -194,7 +196,7 @@ pub(super) fn make_navigate_to(
                 search_ref.set_text("");
             }
             selection_ref.unselect_all();
-            filter_ref.changed(gtk::FilterChange::Different);
+            refresh_visible_store(&store_ref, &state_ref.borrow());
 
             if sync_tree {
                 state_ref.borrow_mut().syncing_tree = true;

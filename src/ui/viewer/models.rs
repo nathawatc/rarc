@@ -1,4 +1,4 @@
-use std::cell::{OnceCell, RefCell};
+use std::cell::RefCell;
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -23,25 +23,11 @@ use crate::ui::session_temp_dir;
 
 pub(super) mod imp {
     use super::*;
-    use std::cell::{Cell, RefCell};
-
-    #[derive(Clone, Default)]
-    pub struct ArchiveRowData {
-        pub entry: ArchiveEntry,
-        pub name: String,
-        pub parent_dir: String,
-        pub type_label: String,
-    }
-
-    impl ArchiveRowData {
-        pub fn is_dir(&self) -> bool {
-            self.entry.kind == EntryKind::Directory
-        }
-    }
+    use std::cell::{Cell, OnceCell, RefCell};
 
     #[derive(Default)]
     pub struct ArchiveRowObject {
-        pub data: RefCell<ArchiveRowData>,
+        pub entry: OnceCell<Rc<ArchiveEntry>>,
     }
 
     #[glib::object_subclass]
@@ -219,18 +205,33 @@ glib::wrapper! {
 }
 
 impl ArchiveRowObject {
-    pub(super) fn new(data: imp::ArchiveRowData) -> Self {
+    pub(super) fn new(entry: Rc<ArchiveEntry>) -> Self {
         let obj: Self = glib::Object::new();
-        *obj.imp().data.borrow_mut() = data;
+        let _ = obj.imp().entry.set(entry);
         obj
     }
 
-    pub(super) fn with_data<R>(&self, f: impl FnOnce(&imp::ArchiveRowData) -> R) -> R {
-        f(&self.imp().data.borrow())
+    pub(super) fn entry_ref(&self) -> &ArchiveEntry {
+        self.imp()
+            .entry
+            .get()
+            .expect("ArchiveRowObject initialized")
+    }
+
+    pub(super) fn is_dir(&self) -> bool {
+        self.entry_ref().kind == EntryKind::Directory
+    }
+
+    pub(super) fn name(&self) -> &str {
+        path_basename(&self.entry_ref().path)
+    }
+
+    pub(super) fn parent_dir(&self) -> &str {
+        path_parent(&self.entry_ref().path)
     }
 
     pub(super) fn entry(&self) -> ArchiveEntry {
-        self.imp().data.borrow().entry.clone()
+        self.entry_ref().clone()
     }
 }
 
@@ -318,6 +319,8 @@ pub(super) struct ViewerState {
     pub syncing_tree: bool,
     pub history_back: Vec<String>,
     pub history_forward: Vec<String>,
+    pub entries: Vec<Rc<ArchiveEntry>>,
+    pub dir_entries: HashMap<String, Vec<usize>>,
     pub dir_children: HashMap<String, Vec<String>>,
 }
 
@@ -392,27 +395,19 @@ pub(super) fn collect_selected_rows(selection: &gtk::MultiSelection) -> Vec<Arch
 pub(super) fn collect_selected_paths(selection: &gtk::MultiSelection) -> Vec<String> {
     collect_selected_rows(selection)
         .into_iter()
-        .map(|row| row.with_data(|d| d.entry.path.clone()))
+        .map(|row| row.entry_ref().path.clone())
         .collect()
 }
 
 pub(super) fn compute_selected_bytes(
-    store: &gio::ListStore,
+    entries: &[Rc<ArchiveEntry>],
     selected_prefixes: Option<&[String]>,
 ) -> u64 {
-    let mut total = 0u64;
-    for idx in 0..store.n_items() {
-        if let Some(obj) = store.item(idx)
-            && let Some(row) = obj.downcast_ref::<ArchiveRowObject>()
-        {
-            row.with_data(|d| {
-                if !d.is_dir() && matches_selection(&d.entry.path, selected_prefixes) {
-                    total += d.entry.size;
-                }
-            });
-        }
-    }
-    total
+    entries
+        .iter()
+        .filter(|e| e.kind != EntryKind::Directory && matches_selection(&e.path, selected_prefixes))
+        .map(|e| e.size)
+        .sum()
 }
 
 pub(super) fn path_basename(path: &str) -> &str {
@@ -422,75 +417,91 @@ pub(super) fn path_basename(path: &str) -> &str {
     }
 }
 
+pub(super) fn path_parent(path: &str) -> &str {
+    match path.rsplit_once('/') {
+        Some((parent, _)) => parent,
+        None => "",
+    }
+}
+
 pub(super) fn cmp_ascii_ignore_case(a: &str, b: &str) -> Ordering {
     a.bytes()
         .map(|c| c.to_ascii_lowercase())
         .cmp(b.bytes().map(|c| c.to_ascii_lowercase()))
 }
 
-pub(super) fn build_folder_children_map(entries: &[ArchiveEntry]) -> HashMap<String, Vec<String>> {
-    let mut dir_children: HashMap<String, Vec<String>> = HashMap::new();
-    let mut seen_dirs: HashSet<String> = HashSet::new();
-
-    for entry in entries {
-        let dir_path = if entry.kind == EntryKind::Directory {
-            Some(entry.path.as_str())
-        } else {
-            entry.path.rsplit_once('/').map(|(p, _)| p)
-        };
-        let Some(full_dir) = dir_path else { continue };
-        let mut acc = String::new();
-        for part in full_dir.split('/') {
-            let parent = acc.clone();
-            if !acc.is_empty() {
-                acc.push('/');
-            }
-            acc.push_str(part);
-            if seen_dirs.insert(acc.clone()) {
-                dir_children.entry(parent).or_default().push(acc.clone());
-            }
-        }
+pub(super) fn contains_ascii_ignore_case(haystack: &str, needle_lower: &str) -> bool {
+    let n = needle_lower.as_bytes();
+    if n.is_empty() {
+        return true;
     }
-    for list in dir_children.values_mut() {
-        list.sort_by(|a, b| cmp_ascii_ignore_case(path_basename(a), path_basename(b)));
+    let h = haystack.as_bytes();
+    if n.len() > h.len() {
+        return false;
     }
-    dir_children
+    h.windows(n.len())
+        .any(|w| w.iter().zip(n).all(|(a, b)| a.to_ascii_lowercase() == *b))
 }
 
-fn build_row_specs(entries: &[ArchiveEntry]) -> Vec<imp::ArchiveRowData> {
-    let mut rows = Vec::with_capacity(entries.len());
-    let mut seen_paths: HashSet<String> = HashSet::with_capacity(entries.len());
+pub(super) struct ArchiveIndex {
+    pub entries: Vec<Rc<ArchiveEntry>>,
+    pub dir_entries: HashMap<String, Vec<usize>>,
+    pub dir_children: HashMap<String, Vec<String>>,
+}
+
+/// Consumes raw archive entries in a single pass, synthesizing missing parent folders
+/// and building `O(1)` directory-to-entry and folder-tree indices.
+pub(super) fn index_archive_entries(raw_entries: Vec<ArchiveEntry>) -> ArchiveIndex {
+    let mut entries: Vec<Rc<ArchiveEntry>> = Vec::with_capacity(raw_entries.len());
+    let mut dir_entries: HashMap<String, Vec<usize>> = HashMap::new();
+    let mut dir_children: HashMap<String, Vec<String>> = HashMap::new();
+    let mut seen_paths: HashSet<String> = HashSet::with_capacity(raw_entries.len());
+    let mut seen_dirs: HashSet<String> = HashSet::new();
     let mut queued_dirs: HashSet<String> = HashSet::new();
 
-    for entry in entries {
-        let (parent_dir, name) = split_parent_and_name(&entry.path);
+    for entry in raw_entries {
+        let idx = entries.len();
+        let parent_dir = path_parent(&entry.path).to_string();
+        let is_dir = entry.kind == EntryKind::Directory;
         seen_paths.insert(entry.path.clone());
 
-        if !parent_dir.is_empty() {
+        let ancestor_dir = if is_dir {
+            Some(entry.path.as_str())
+        } else if !parent_dir.is_empty() {
+            Some(parent_dir.as_str())
+        } else {
+            None
+        };
+        if let Some(full_dir) = ancestor_dir {
             let mut acc = String::new();
-            for part in parent_dir.split('/') {
+            for part in full_dir.split('/') {
+                let parent = acc.clone();
                 if !acc.is_empty() {
                     acc.push('/');
                 }
                 acc.push_str(part);
-                if !seen_paths.contains(&acc) && !queued_dirs.contains(&acc) {
+                if seen_dirs.insert(acc.clone()) {
+                    dir_children.entry(parent).or_default().push(acc.clone());
+                }
+                if (!is_dir || acc != entry.path)
+                    && !seen_paths.contains(&acc)
+                    && !queued_dirs.contains(&acc)
+                {
                     queued_dirs.insert(acc.clone());
                 }
             }
         }
 
-        rows.push(imp::ArchiveRowData {
-            type_label: entry.kind.label(&name),
-            name,
-            parent_dir,
-            entry: entry.clone(),
-        });
+        dir_entries.entry(parent_dir).or_default().push(idx);
+        entries.push(Rc::new(entry));
     }
 
     for dir_path in queued_dirs {
         if seen_paths.insert(dir_path.clone()) {
-            let (parent_dir, name) = split_parent_and_name(&dir_path);
-            let entry = ArchiveEntry {
+            let idx = entries.len();
+            let parent_dir = path_parent(&dir_path).to_string();
+            dir_entries.entry(parent_dir).or_default().push(idx);
+            entries.push(Rc::new(ArchiveEntry {
                 path: dir_path,
                 size: 0,
                 compressed_size: None,
@@ -499,31 +510,43 @@ fn build_row_specs(entries: &[ArchiveEntry]) -> Vec<imp::ArchiveRowData> {
                 mode: 0o755,
                 symlink_target: None,
                 is_encrypted: false,
-            };
-            rows.push(imp::ArchiveRowData {
-                type_label: entry.kind.label(&name),
-                name,
-                parent_dir,
-                entry,
-            });
+            }));
         }
     }
 
-    rows
-}
-
-pub(super) fn build_row_objects(entries: &[ArchiveEntry]) -> Vec<ArchiveRowObject> {
-    build_row_specs(entries)
-        .into_iter()
-        .map(ArchiveRowObject::new)
-        .collect()
-}
-
-pub(super) fn split_parent_and_name(path: &str) -> (String, String) {
-    match path.rsplit_once('/') {
-        Some((parent, name)) => (parent.to_string(), name.to_string()),
-        None => (String::new(), path.to_string()),
+    for list in dir_children.values_mut() {
+        list.sort_by(|a, b| cmp_ascii_ignore_case(path_basename(a), path_basename(b)));
     }
+
+    ArchiveIndex {
+        entries,
+        dir_entries,
+        dir_children,
+    }
+}
+
+pub(super) fn refresh_visible_store(store: &gio::ListStore, state: &ViewerState) {
+    let rows: Vec<ArchiveRowObject> = if state.search_query.is_empty() {
+        state
+            .dir_entries
+            .get(&state.current_dir)
+            .map(|indices| {
+                indices
+                    .iter()
+                    .map(|&idx| ArchiveRowObject::new(Rc::clone(&state.entries[idx])))
+                    .collect()
+            })
+            .unwrap_or_default()
+    } else {
+        let q = state.search_query.as_str();
+        state
+            .entries
+            .iter()
+            .filter(|e| contains_ascii_ignore_case(&e.path, q))
+            .map(|e| ArchiveRowObject::new(Rc::clone(e)))
+            .collect()
+    };
+    store.splice(0, store.n_items(), &rows);
 }
 
 #[cfg(test)]
@@ -549,21 +572,24 @@ mod tests {
     }
 
     #[test]
-    fn row_specs_synthesize_unique_missing_parent_dirs() {
+    fn index_synthesizes_unique_missing_parent_dirs_and_maps_children() {
         let entries = vec![
             file_entry("a/b/one.txt", 10),
             file_entry("a/b/two.txt", 20),
             dir_entry("a/b", Some(1234)),
         ];
-        let rows = build_row_specs(&entries);
-        let dir_a: Vec<_> = rows.iter().filter(|r| r.entry.path == "a").collect();
-        let dir_ab: Vec<_> = rows.iter().filter(|r| r.entry.path == "a/b").collect();
+        let index = index_archive_entries(entries);
+        let dir_a: Vec<_> = index.entries.iter().filter(|e| e.path == "a").collect();
+        let dir_ab: Vec<_> = index.entries.iter().filter(|e| e.path == "a/b").collect();
 
         assert_eq!(dir_a.len(), 1);
-        assert!(dir_a[0].is_dir());
-        assert_eq!(dir_a[0].parent_dir, "");
+        assert_eq!(dir_a[0].kind, EntryKind::Directory);
+        assert_eq!(path_parent(&dir_a[0].path), "");
         assert_eq!(dir_ab.len(), 1);
-        assert_eq!(dir_ab[0].entry.mtime, Some(1234));
+        assert_eq!(dir_ab[0].mtime, Some(1234));
+        assert_eq!(index.dir_entries[""].len(), 1);
+        assert_eq!(index.dir_entries["a"].len(), 1);
+        assert_eq!(index.dir_entries["a/b"].len(), 2);
     }
 
     #[test]
@@ -573,9 +599,21 @@ mod tests {
             file_entry("Alpha/sub/y.txt", 2),
             dir_entry("zeta", None),
         ];
-        let tree = build_folder_children_map(&entries);
-        let top: Vec<&str> = tree[""].iter().map(|p| path_basename(p)).collect();
+        let index = index_archive_entries(entries);
+        let top: Vec<&str> = index.dir_children[""]
+            .iter()
+            .map(|p| path_basename(p))
+            .collect();
         assert_eq!(top, vec!["Alpha", "zeta"]);
-        assert_eq!(tree["zeta"], vec!["zeta/sub".to_string()]);
+        assert_eq!(index.dir_children["zeta"], vec!["zeta/sub".to_string()]);
+    }
+
+    #[test]
+    fn ascii_case_insensitive_helpers() {
+        assert_eq!(cmp_ascii_ignore_case("Alpha", "alpha"), Ordering::Equal);
+        assert_eq!(cmp_ascii_ignore_case("Alpha", "beta"), Ordering::Less);
+        assert!(contains_ascii_ignore_case("src/Main.RS", "main.rs"));
+        assert!(!contains_ascii_ignore_case("src/main.rs", "cargo"));
+        assert!(contains_ascii_ignore_case("anything", ""));
     }
 }

@@ -25,7 +25,7 @@ use actions::{
 };
 use columns::append_columns;
 use models::{
-    build_folder_children_map, build_row_objects, ArchiveRowObject, FolderTreeNode, NavFn, NavMode,
+    index_archive_entries, refresh_visible_store, ArchiveRowObject, FolderTreeNode, NavFn, NavMode,
     ViewerState,
 };
 use tree::{build_tree_sidebar, install_thumb_buttons, make_navigate_to};
@@ -110,25 +110,8 @@ pub fn launch_standalone(app: &gtk::Application, initial_archive: Option<PathBuf
     let (tree_root_store, tree_model, tree_selection, tree_view, tree_scroll) =
         build_tree_sidebar(&state);
 
-    // ColumnView data pipeline
+    // ColumnView data pipeline (store holds only the currently visible directory or search results)
     let store = gio::ListStore::new::<ArchiveRowObject>();
-    let filter = {
-        let state_ref = state.clone();
-        gtk::CustomFilter::new(move |obj| {
-            let row = obj.downcast_ref::<ArchiveRowObject>().unwrap();
-            let st = state_ref.borrow();
-            row.with_data(|d| {
-                if st.search_query.is_empty() {
-                    d.parent_dir == st.current_dir
-                } else {
-                    let q = st.search_query.as_str();
-                    d.name.to_ascii_lowercase().contains(q)
-                        || d.entry.path.to_ascii_lowercase().contains(q)
-                }
-            })
-        })
-    };
-    let filter_model = gtk::FilterListModel::new(Some(store.clone()), Some(filter.clone()));
 
     let column_view = gtk::ColumnView::new(None::<gtk::SelectionModel>);
     column_view.set_show_row_separators(false);
@@ -136,7 +119,7 @@ pub fn launch_standalone(app: &gtk::Application, initial_archive: Option<PathBuf
     column_view.set_vexpand(true);
     column_view.set_hexpand(true);
 
-    let sort_model = gtk::SortListModel::new(Some(filter_model), column_view.sorter());
+    let sort_model = gtk::SortListModel::new(Some(store.clone()), column_view.sorter());
     let selection = gtk::MultiSelection::new(Some(sort_model));
 
     let (act_open, act_open_with, act_extract, act_copy, act_props, show_context_menu) =
@@ -185,7 +168,7 @@ pub fn launch_standalone(app: &gtk::Application, initial_archive: Option<PathBuf
         &state,
         &crumbs_box,
         &up_btn,
-        &filter,
+        &store,
         &search_entry,
         &selection,
         &tree_view,
@@ -235,17 +218,27 @@ pub fn launch_standalone(app: &gtk::Application, initial_archive: Option<PathBuf
     // Search entry filtering
     {
         let state_ref = state.clone();
-        let filter_ref = filter.clone();
+        let store_ref = store.clone();
         search_entry.connect_search_changed(move |entry| {
-            state_ref.borrow_mut().search_query = entry.text().trim().to_ascii_lowercase();
-            filter_ref.changed(gtk::FilterChange::Different);
+            let query = entry.text().trim().to_ascii_lowercase();
+            let changed = {
+                let mut st = state_ref.borrow_mut();
+                if st.search_query == query {
+                    false
+                } else {
+                    st.search_query = query;
+                    true
+                }
+            };
+            if changed {
+                refresh_visible_store(&store_ref, &state_ref.borrow());
+            }
         });
     }
 
     let open_archive = make_open_archive(
         &window,
         &state,
-        &store,
         &tree_root_store,
         &tree_model,
         &stack,
@@ -258,7 +251,6 @@ pub fn launch_standalone(app: &gtk::Application, initial_archive: Option<PathBuf
     install_header_actions(
         &window,
         &state,
-        &store,
         &selection,
         &open_btn,
         &new_btn,
@@ -271,7 +263,6 @@ pub fn launch_standalone(app: &gtk::Application, initial_archive: Option<PathBuf
     install_context_actions(
         &window,
         &state,
-        &store,
         &selection,
         &navigate_to,
         &act_open,
@@ -298,7 +289,7 @@ pub fn launch_standalone(app: &gtk::Application, initial_archive: Option<PathBuf
         });
     }
 
-    install_dnd(&window, &stack, &column_view, &state, &store, &selection, &open_archive);
+    install_dnd(&window, &stack, &column_view, &state, &selection, &open_archive);
 
     window.present();
     if let Some(path) = initial_archive {
@@ -387,7 +378,6 @@ fn build_main_stack(paned: &gtk::Paned) -> gtk::Stack {
 fn make_open_archive(
     window: &gtk::ApplicationWindow,
     state: &Rc<RefCell<ViewerState>>,
-    store: &gio::ListStore,
     tree_root_store: &gio::ListStore,
     tree_model: &gtk::TreeListModel,
     stack: &gtk::Stack,
@@ -398,7 +388,6 @@ fn make_open_archive(
 ) -> Rc<dyn Fn(PathBuf)> {
     let window_ref = window.clone();
     let state_ref = state.clone();
-    let store_ref = store.clone();
     let tree_root_ref = tree_root_store.clone();
     let tree_model_ref = tree_model.clone();
     let stack_ref = stack.clone();
@@ -428,7 +417,6 @@ fn make_open_archive(
 
         let win_done = window_ref.clone();
         let st_done = state_ref.clone();
-        let store_done = store_ref.clone();
         let tree_root_done = tree_root_ref.clone();
         let tree_model_done = tree_model_ref.clone();
         let stack_done = stack_ref.clone();
@@ -450,17 +438,16 @@ fn make_open_archive(
             },
             move |summary| {
                 if let OperationSummary::Listed(listing) = summary {
-                    let rows = build_row_objects(&listing.entries);
                     let archive_name = path_done
                         .file_name()
                         .and_then(|s| s.to_str())
                         .unwrap_or("Archive");
-                    let dir_children = build_folder_children_map(&listing.entries);
-                    let root_node = FolderTreeNode::new(archive_name.to_string(), String::new());
                     let entry_count = listing.entries.len();
                     let total_uncompressed: u64 = listing.entries.iter().map(|e| e.size).sum();
                     let encrypted_count =
                         listing.entries.iter().filter(|e| e.is_encrypted).count();
+                    let index = index_archive_entries(listing.entries);
+                    let root_node = FolderTreeNode::new(archive_name.to_string(), String::new());
 
                     let (target_dir, nav_mode) = {
                         let mut st = st_done.borrow_mut();
@@ -472,7 +459,9 @@ fn make_open_archive(
                         st.entry_count = entry_count;
                         st.total_uncompressed = total_uncompressed;
                         st.encrypted_count = encrypted_count;
-                        st.dir_children = dir_children;
+                        st.entries = index.entries;
+                        st.dir_entries = index.dir_entries;
+                        st.dir_children = index.dir_children;
                         if !same_archive {
                             st.current_dir.clear();
                         }
@@ -484,10 +473,7 @@ fn make_open_archive(
                         (st.current_dir.clone(), mode)
                     };
 
-                    store_done.remove_all();
-                    store_done.extend_from_slice(&rows);
-                    tree_root_done.remove_all();
-                    tree_root_done.append(&root_node);
+                    tree_root_done.splice(0, tree_root_done.n_items(), &[root_node]);
                     if let Some(first_row) = tree_model_done.row(0) {
                         first_row.set_expanded(true);
                     }
@@ -498,17 +484,30 @@ fn make_open_archive(
                     props_done.set_sensitive(true);
                     stack_done.set_visible_child_name("list");
                     nav_done(target_dir, true, nav_mode);
+                    trim_glibc_heap();
                 }
             },
         );
     })
 }
 
+/// Returns freed temporary heap pages (from listing/indexing) to the OS on glibc.
+fn trim_glibc_heap() {
+    #[cfg(target_env = "gnu")]
+    {
+        unsafe extern "C" {
+            fn malloc_trim(pad: usize) -> std::os::raw::c_int;
+        }
+        unsafe {
+            malloc_trim(0);
+        }
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn install_header_actions(
     window: &gtk::ApplicationWindow,
     state: &Rc<RefCell<ViewerState>>,
-    store: &gio::ListStore,
     selection: &gtk::MultiSelection,
     open_btn: &gtk::Button,
     new_btn: &gtk::Button,
@@ -553,10 +552,9 @@ fn install_header_actions(
     {
         let win_ref = window.clone();
         let state_ref = state.clone();
-        let store_ref = store.clone();
         let selection_ref = selection.clone();
         extract_btn.connect_clicked(move |_| {
-            start_extract_dialog(&win_ref, &state_ref, &store_ref, &selection_ref, false);
+            start_extract_dialog(&win_ref, &state_ref, &selection_ref, false);
         });
     }
     {

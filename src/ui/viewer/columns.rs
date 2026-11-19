@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -5,9 +6,10 @@ use gtk4 as gtk;
 use gtk::gio;
 use gtk::prelude::*;
 
+use crate::archive::{ArchiveEntry, EntryKind};
 use crate::ui::{format_mtime, format_size};
 
-use super::models::{imp, ArchiveRowObject};
+use super::models::{cmp_ascii_ignore_case, path_basename, ArchiveRowObject};
 
 pub(super) type CellRightClickFn = Rc<dyn Fn(&gtk::Widget, f64, f64, Option<u32>)>;
 
@@ -95,15 +97,13 @@ pub(super) fn append_columns(view: &gtk::ColumnView, on_right_click: &CellRightC
         let label = icon.next_sibling().and_downcast::<gtk::Label>().unwrap();
         let lock = label.next_sibling().and_downcast::<gtk::Image>().unwrap();
         set_cell_bound_pos(item, Some(item.position()));
-        row.with_data(|d| {
-            icon.set_icon_name(Some(if d.is_dir() {
-                "folder-symbolic"
-            } else {
-                "text-x-generic-symbolic"
-            }));
-            label.set_text(&d.name);
-            lock.set_visible(d.entry.is_encrypted);
-        });
+        icon.set_icon_name(Some(if row.is_dir() {
+            "folder-symbolic"
+        } else {
+            "text-x-generic-symbolic"
+        }));
+        label.set_text(row.name());
+        lock.set_visible(row.entry_ref().is_encrypted);
     });
     name_factory.connect_unbind(|_, obj| {
         set_cell_bound_pos(obj.downcast_ref::<gtk::ListItem>().unwrap(), None);
@@ -112,14 +112,10 @@ pub(super) fn append_columns(view: &gtk::ColumnView, on_right_click: &CellRightC
     let name_sorter = gtk::CustomSorter::new(|a, b| {
         let ra = a.downcast_ref::<ArchiveRowObject>().unwrap();
         let rb = b.downcast_ref::<ArchiveRowObject>().unwrap();
-        ra.with_data(|da| {
-            rb.with_data(|db| {
-                db.is_dir()
-                    .cmp(&da.is_dir())
-                    .then_with(|| da.name.to_ascii_lowercase().cmp(&db.name.to_ascii_lowercase()))
-                    .into()
-            })
-        })
+        rb.is_dir()
+            .cmp(&ra.is_dir())
+            .then_with(|| cmp_ascii_ignore_case(ra.name(), rb.name()))
+            .into()
     });
     let name_col = gtk::ColumnViewColumn::builder()
         .title("Name")
@@ -138,14 +134,14 @@ pub(super) fn append_columns(view: &gtk::ColumnView, on_right_click: &CellRightC
         true,
         130,
         on_right_click.clone(),
-        |d| {
-            if d.is_dir() {
-                "—".to_string()
+        |e| {
+            if e.kind == EntryKind::Directory {
+                Cow::Borrowed("—")
             } else {
-                format_size(d.entry.size)
+                Cow::Owned(format_size(e.size))
             }
         },
-        |da, db| da.entry.size.cmp(&db.entry.size),
+        |ea, eb| ea.size.cmp(&eb.size),
     );
     view.append_column(&size_col);
 
@@ -156,8 +152,12 @@ pub(super) fn append_columns(view: &gtk::ColumnView, on_right_click: &CellRightC
         false,
         120,
         on_right_click.clone(),
-        |d| d.type_label.clone(),
-        |da, db| da.type_label.cmp(&db.type_label),
+        |e| e.kind.label_cow(path_basename(&e.path)),
+        |ea, eb| {
+            ea.kind
+                .label_cow(path_basename(&ea.path))
+                .cmp(&eb.kind.label_cow(path_basename(&eb.path)))
+        },
     );
     view.append_column(&type_col);
 
@@ -168,8 +168,14 @@ pub(super) fn append_columns(view: &gtk::ColumnView, on_right_click: &CellRightC
         true,
         150,
         on_right_click.clone(),
-        |d| format_mtime(d.entry.mtime),
-        |da, db| da.entry.mtime.cmp(&db.entry.mtime),
+        |e| {
+            if e.mtime.is_none() {
+                Cow::Borrowed("—")
+            } else {
+                Cow::Owned(format_mtime(e.mtime))
+            }
+        },
+        |ea, eb| ea.mtime.cmp(&eb.mtime),
     );
     view.append_column(&mtime_col);
 }
@@ -184,8 +190,8 @@ fn make_text_column<FText, FSorter>(
     sort_fn: FSorter,
 ) -> gtk::ColumnViewColumn
 where
-    FText: Fn(&imp::ArchiveRowData) -> String + 'static,
-    FSorter: Fn(&imp::ArchiveRowData, &imp::ArchiveRowData) -> std::cmp::Ordering + 'static,
+    FText: Fn(&ArchiveEntry) -> Cow<'static, str> + 'static,
+    FSorter: Fn(&ArchiveEntry, &ArchiveEntry) -> std::cmp::Ordering + 'static,
 {
     let factory = gtk::SignalListItemFactory::new();
     factory.connect_setup(move |_, obj| {
@@ -205,7 +211,7 @@ where
         let row = item.item().and_downcast::<ArchiveRowObject>().unwrap();
         let label = item.child().and_downcast::<gtk::Label>().unwrap();
         set_cell_bound_pos(item, Some(item.position()));
-        row.with_data(|d| label.set_text(&format_fn(d)));
+        label.set_text(&format_fn(row.entry_ref()));
     });
     factory.connect_unbind(|_, obj| {
         set_cell_bound_pos(obj.downcast_ref::<gtk::ListItem>().unwrap(), None);
@@ -214,7 +220,7 @@ where
     let sorter = gtk::CustomSorter::new(move |a, b| {
         let ra = a.downcast_ref::<ArchiveRowObject>().unwrap();
         let rb = b.downcast_ref::<ArchiveRowObject>().unwrap();
-        ra.with_data(|da| rb.with_data(|db| sort_fn(da, db).into()))
+        sort_fn(ra.entry_ref(), rb.entry_ref()).into()
     });
 
     gtk::ColumnViewColumn::builder()
