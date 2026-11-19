@@ -14,9 +14,9 @@ use gtk::prelude::*;
 use gtk::subclass::prelude::*;
 
 use crate::archive::{
-    add_to_archive, extract_archive_with_session, list_archive, matches_selection, spawn_worker,
-    test_archive, ArchiveEntry, ArchiveError, ConflictResolution, EntryKind, ExtractSession,
-    OperationSummary, WorkerEvent,
+    add_to_archive, extract_archive_with_session, is_supported_archive_path, list_archive,
+    matches_selection, spawn_worker, test_archive, ArchiveEntry, ArchiveError, ConflictResolution,
+    EntryKind, ExtractSession, OperationSummary, WorkerEvent,
 };
 use crate::ui::dialogs::{
     prompt_password_async, run_worker_with_progress, show_create_dialog, show_properties_dialog,
@@ -337,6 +337,16 @@ struct ViewerState {
     syncing_tree: bool,
     history_back: Vec<String>,
     history_forward: Vec<String>,
+}
+
+impl ViewerState {
+    fn active_strip_prefix(&self) -> Option<String> {
+        if !self.search_query.is_empty() || self.current_dir.is_empty() {
+            None
+        } else {
+            Some(self.current_dir.clone())
+        }
+    }
 }
 
 type CellRightClickFn = Rc<dyn Fn(&gtk::Widget, f64, f64, Option<u32>)>;
@@ -1259,7 +1269,10 @@ pub fn launch_standalone(app: &gtk::Application, initial_archive: Option<PathBuf
                     },
                 );
                 true
-            } else if paths.len() == 1 && paths[0].is_file() && looks_like_archive(&paths[0]) {
+            } else if paths.len() == 1
+                && paths[0].is_file()
+                && is_supported_archive_path(&paths[0])
+            {
                 open_fn(paths[0].clone());
                 true
             } else {
@@ -1298,11 +1311,7 @@ pub fn launch_standalone(app: &gtk::Application, initial_archive: Option<PathBuf
                 return None;
             }
             let total_bytes = compute_selected_bytes(&store_ref, Some(&selected));
-            let strip = if st.current_dir.is_empty() {
-                None
-            } else {
-                Some(st.current_dir.clone())
-            };
+            let strip = st.active_strip_prefix();
             let provider = ArchiveDragProvider::new(
                 arch.clone(),
                 selected,
@@ -1489,8 +1498,8 @@ fn start_extract_dialog(
     };
     let (strip_prefix, cached_pw, is_raw, total_bytes) = {
         let st = state.borrow();
-        let strip = if selected_opt.is_some() && !st.current_dir.is_empty() {
-            Some(st.current_dir.clone())
+        let strip = if selected_opt.is_some() {
+            st.active_strip_prefix()
         } else {
             None
         };
@@ -1578,11 +1587,7 @@ fn copy_selected_to_clipboard(
     let (seq, strip_prefix, cached_pw, is_raw, total_bytes) = {
         let mut st = state.borrow_mut();
         st.stage_seq += 1;
-        let strip = if st.current_dir.is_empty() {
-            None
-        } else {
-            Some(st.current_dir.clone())
-        };
+        let strip = st.active_strip_prefix();
         let bytes = compute_selected_bytes(store, Some(&selected));
         (
             st.stage_seq,
@@ -1743,27 +1748,35 @@ fn sync_tree_selection(
     tree_selection: &gtk::SingleSelection,
     target_dir: &str,
 ) {
-    // Expand ancestor rows down to `target_dir` so the target node becomes visible.
+    // Expand ancestor rows top-down while advancing scan offset monotonically.
     if let Some(root_row) = tree_model.row(0) {
         root_row.set_expanded(true);
     }
+
+    let mut target_idx = if target_dir.is_empty() { Some(0) } else { None };
     if !target_dir.is_empty() {
+        let mut start = 1u32;
         let mut acc = String::new();
         for part in target_dir.split('/') {
             if !acc.is_empty() {
                 acc.push('/');
             }
             acc.push_str(part);
-            if let Some(idx) = find_tree_row_index(tree_model, &acc)
-                && let Some(row) = tree_model.row(idx)
-                && acc != target_dir
-            {
+            let Some(idx) = find_tree_row_index_from(tree_model, start, &acc) else {
+                break;
+            };
+            if acc == target_dir {
+                target_idx = Some(idx);
+                break;
+            }
+            if let Some(row) = tree_model.row(idx) {
                 row.set_expanded(true);
             }
+            start = idx + 1;
         }
     }
 
-    if let Some(idx) = find_tree_row_index(tree_model, target_dir) {
+    if let Some(idx) = target_idx {
         tree_selection.set_selected(idx);
         tree_view.scroll_to(
             idx,
@@ -1773,8 +1786,12 @@ fn sync_tree_selection(
     }
 }
 
-fn find_tree_row_index(tree_model: &gtk::TreeListModel, target_dir: &str) -> Option<u32> {
-    for idx in 0..tree_model.n_items() {
+fn find_tree_row_index_from(
+    tree_model: &gtk::TreeListModel,
+    start: u32,
+    target_dir: &str,
+) -> Option<u32> {
+    for idx in start..tree_model.n_items() {
         if let Some(row) = tree_model.row(idx)
             && let Some(node) = row.item().and_downcast::<FolderTreeNode>()
             && node.full_path() == target_dir
@@ -1877,8 +1894,8 @@ fn compute_selected_bytes(store: &gio::ListStore, selected_prefixes: Option<&[St
 
 fn build_row_objects(entries: &[ArchiveEntry]) -> Vec<ArchiveRowObject> {
     let mut rows = Vec::with_capacity(entries.len());
-    let mut seen_paths: HashSet<String> = HashSet::new();
-    let mut needed_dirs: Vec<String> = Vec::new();
+    let mut seen_paths: HashSet<String> = HashSet::with_capacity(entries.len());
+    let mut queued_dirs: HashSet<String> = HashSet::new();
 
     for entry in entries {
         let is_dir = entry.kind == EntryKind::Directory;
@@ -1893,8 +1910,8 @@ fn build_row_objects(entries: &[ArchiveEntry]) -> Vec<ArchiveRowObject> {
                     acc.push('/');
                 }
                 acc.push_str(part);
-                if !seen_paths.contains(&acc) {
-                    needed_dirs.push(acc.clone());
+                if !seen_paths.contains(&acc) && !queued_dirs.contains(&acc) {
+                    queued_dirs.insert(acc.clone());
                 }
             }
         }
@@ -1914,7 +1931,7 @@ fn build_row_objects(entries: &[ArchiveEntry]) -> Vec<ArchiveRowObject> {
         }));
     }
 
-    for dir_path in needed_dirs {
+    for dir_path in queued_dirs {
         if seen_paths.insert(dir_path.clone()) {
             let (parent_dir, name) = split_parent_and_name(&dir_path);
             rows.push(ArchiveRowObject::new(imp::ArchiveRowData {
@@ -2132,19 +2149,4 @@ where
         .fixed_width(fixed_width)
         .resizable(true)
         .build()
-}
-
-fn looks_like_archive(path: &Path) -> bool {
-    let lower = path
-        .file_name()
-        .and_then(|s| s.to_str())
-        .unwrap_or("")
-        .to_ascii_lowercase();
-    [
-        ".tar", ".tar.gz", ".tgz", ".tar.xz", ".txz", ".tar.zst", ".tzst", ".tar.bz2", ".tbz2",
-        ".zip", ".7z", ".rar", ".iso", ".cab", ".cpio", ".ar", ".deb", ".rpm", ".jar", ".apk",
-        ".gz", ".xz", ".zst", ".bz2", ".lz4",
-    ]
-    .iter()
-    .any(|ext| lower.ends_with(ext))
 }

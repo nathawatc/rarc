@@ -252,6 +252,92 @@ fn path_to_slash_string(path: &Path) -> String {
         .join("/")
 }
 
+const COMPOUND_TAR_EXTS: &[&str] = &[
+    ".tar.zst",
+    ".tar.xz",
+    ".tar.gz",
+    ".tar.bz2",
+    ".tar.lz4",
+    ".tar.lzma",
+    ".tar.lzo",
+    ".tar.lz",
+    ".tar.z",
+];
+
+const WRITABLE_EXT_SPECS: &[(&str, WritableSpec)] = &[
+    (".zip", WritableSpec::Zip),
+    (".7z", WritableSpec::SevenZ),
+    (
+        ".tar.zst",
+        WritableSpec::Tar {
+            filter: Some(ffi::ARCHIVE_FILTER_ZSTD),
+        },
+    ),
+    (
+        ".tzst",
+        WritableSpec::Tar {
+            filter: Some(ffi::ARCHIVE_FILTER_ZSTD),
+        },
+    ),
+    (
+        ".tar.xz",
+        WritableSpec::Tar {
+            filter: Some(ffi::ARCHIVE_FILTER_XZ),
+        },
+    ),
+    (
+        ".txz",
+        WritableSpec::Tar {
+            filter: Some(ffi::ARCHIVE_FILTER_XZ),
+        },
+    ),
+    (
+        ".tar.gz",
+        WritableSpec::Tar {
+            filter: Some(ffi::ARCHIVE_FILTER_GZIP),
+        },
+    ),
+    (
+        ".tgz",
+        WritableSpec::Tar {
+            filter: Some(ffi::ARCHIVE_FILTER_GZIP),
+        },
+    ),
+    (
+        ".tar.bz2",
+        WritableSpec::Tar {
+            filter: Some(ffi::ARCHIVE_FILTER_BZIP2),
+        },
+    ),
+    (
+        ".tbz2",
+        WritableSpec::Tar {
+            filter: Some(ffi::ARCHIVE_FILTER_BZIP2),
+        },
+    ),
+    (".tar", WritableSpec::Tar { filter: None }),
+];
+
+const READONLY_ARCHIVE_EXTS: &[&str] = &[
+    ".rar", ".cbr", ".cbz", ".cb7", ".cbt", ".epub", ".jar", ".apk", ".xpi", ".iso", ".cab",
+    ".cpio", ".ar", ".deb", ".rpm", ".xar", ".lha", ".lzh", ".mtree", ".tzo", ".gz", ".xz",
+    ".zst", ".bz2", ".lz4", ".lzma", ".lzo", ".lz", ".lrzip",
+];
+
+/// Returns `true` when `path` ends with a known archive or compressed-stream extension.
+pub fn is_supported_archive_path(path: &Path) -> bool {
+    let lower = path
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    COMPOUND_TAR_EXTS.iter().any(|ext| lower.ends_with(ext))
+        || WRITABLE_EXT_SPECS
+            .iter()
+            .any(|(ext, _)| lower.ends_with(ext))
+        || READONLY_ARCHIVE_EXTS.iter().any(|ext| lower.ends_with(ext))
+}
+
 /// Strips common archive extensions (including compound `.tar.*`) to derive a clean folder stem.
 pub fn archive_stem(archive_path: &Path) -> String {
     let file_name = archive_path
@@ -260,17 +346,7 @@ pub fn archive_stem(archive_path: &Path) -> String {
         .unwrap_or("extracted");
 
     let lower = file_name.to_ascii_lowercase();
-    for compound in [
-        ".tar.zst",
-        ".tar.xz",
-        ".tar.gz",
-        ".tar.bz2",
-        ".tar.lz4",
-        ".tar.lzma",
-        ".tar.lzo",
-        ".tar.lz",
-        ".tar.z",
-    ] {
+    for compound in COMPOUND_TAR_EXTS {
         if lower.ends_with(compound) && file_name.len() > compound.len() {
             return file_name[..file_name.len() - compound.len()].to_string();
         }
@@ -1236,34 +1312,11 @@ fn infer_writable_from_extension(path: &Path) -> Result<WritableSpec, ArchiveErr
         .and_then(|s| s.to_str())
         .unwrap_or("")
         .to_ascii_lowercase();
-    if lower.ends_with(".zip") {
-        Ok(WritableSpec::Zip)
-    } else if lower.ends_with(".7z") {
-        Ok(WritableSpec::SevenZ)
-    } else if lower.ends_with(".tar.zst") || lower.ends_with(".tzst") {
-        Ok(WritableSpec::Tar {
-            filter: Some(ffi::ARCHIVE_FILTER_ZSTD),
-        })
-    } else if lower.ends_with(".tar.xz") || lower.ends_with(".txz") {
-        Ok(WritableSpec::Tar {
-            filter: Some(ffi::ARCHIVE_FILTER_XZ),
-        })
-    } else if lower.ends_with(".tar.gz") || lower.ends_with(".tgz") {
-        Ok(WritableSpec::Tar {
-            filter: Some(ffi::ARCHIVE_FILTER_GZIP),
-        })
-    } else if lower.ends_with(".tar.bz2") || lower.ends_with(".tbz2") {
-        Ok(WritableSpec::Tar {
-            filter: Some(ffi::ARCHIVE_FILTER_BZIP2),
-        })
-    } else if lower.ends_with(".tar") {
-        Ok(WritableSpec::Tar { filter: None })
-    } else {
-        Err(ArchiveError::UnsupportedFormat(format!(
-            "cannot add files to {}",
-            path.display()
-        )))
-    }
+    WRITABLE_EXT_SPECS
+        .iter()
+        .find(|(ext, _)| lower.ends_with(ext))
+        .map(|(_, spec)| *spec)
+        .ok_or_else(|| ArchiveError::UnsupportedFormat(format!("cannot add files to {}", path.display())))
 }
 
 pub fn matches_selection(entry_path: &str, selected_prefixes: Option<&[String]>) -> bool {
@@ -2743,5 +2796,24 @@ mod tests {
         assert_eq!(total_bytes, 15);
         assert_eq!(fs::read(out_dir.join("shared.txt")).unwrap(), b"second");
         assert_eq!(fs::read(out_dir.join("other.txt")).unwrap(), b"tail");
+    }
+
+    #[test]
+    fn extension_recognition_and_stem_consistent() {
+        assert!(is_supported_archive_path(Path::new("comic.cbz")));
+        assert!(is_supported_archive_path(Path::new("book.EPUB")));
+        assert!(is_supported_archive_path(Path::new("old.tar.lzma")));
+        assert!(!is_supported_archive_path(Path::new("notes.txt")));
+
+        assert_eq!(archive_stem(Path::new("/tmp/proj.tar.zst")), "proj");
+        assert_eq!(archive_stem(Path::new("/tmp/archive.tgz")), "archive");
+        assert!(matches!(
+            infer_writable_from_extension(Path::new("out.txz")),
+            Ok(WritableSpec::Tar { filter: Some(_) })
+        ));
+        assert!(matches!(
+            infer_writable_from_extension(Path::new("readonly.rar")),
+            Err(ArchiveError::UnsupportedFormat(_))
+        ));
     }
 }
