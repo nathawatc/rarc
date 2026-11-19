@@ -856,7 +856,7 @@ pub fn create_archive(
         fs::create_dir_all(parent)?;
     }
 
-    let disk_items = collect_disk_items(inputs, "")?;
+    let disk_items = collect_disk_items(inputs, "", Some(output_path))?;
     let bytes_total: u64 = disk_items.iter().map(|item| item.size).sum();
 
     let tmp_path = temp_sibling_path(output_path);
@@ -875,18 +875,9 @@ pub fn create_archive(
     let mut bytes_done = 0u64;
     let mut written_count = 0usize;
     let res = (|| -> Result<(), ArchiveError> {
-        let out_canon = fs::canonicalize(output_path).ok();
-        let tmp_canon = fs::canonicalize(&tmp_path).ok();
-
         for item in &disk_items {
             if cancel.load(Ordering::Relaxed) {
                 return Err(ArchiveError::Cancelled);
-            }
-            if let Ok(item_canon) = fs::canonicalize(&item.disk_path)
-                && (out_canon.as_ref() == Some(&item_canon)
-                    || tmp_canon.as_ref() == Some(&item_canon))
-            {
-                continue;
             }
             write_disk_item(
                 writer.as_ptr(),
@@ -925,7 +916,10 @@ pub fn add_to_archive(
     if inputs.is_empty() {
         return Ok((0, initial_password.map(ToOwned::to_owned)));
     }
-    let disk_items = collect_disk_items(inputs, dest_subdir)?;
+    let disk_items = collect_disk_items(inputs, dest_subdir, Some(archive_path))?;
+    if disk_items.is_empty() {
+        return Ok((0, initial_password.map(ToOwned::to_owned)));
+    }
     let replace_set: HashSet<String> = disk_items.iter().map(|d| d.archive_path.clone()).collect();
     let new_bytes: u64 = disk_items.iter().map(|i| i.size).sum();
 
@@ -1263,9 +1257,14 @@ struct DiskItem {
     symlink_target: Option<PathBuf>,
 }
 
-fn collect_disk_items(inputs: &[PathBuf], dest_subdir: &str) -> Result<Vec<DiskItem>, ArchiveError> {
+fn collect_disk_items(
+    inputs: &[PathBuf],
+    dest_subdir: &str,
+    exclude_path: Option<&Path>,
+) -> Result<Vec<DiskItem>, ArchiveError> {
     let mut items = Vec::new();
     let prefix = dest_subdir.trim_matches('/');
+    let exclude_canon = exclude_path.and_then(|p| fs::canonicalize(p).ok());
     for input in inputs {
         let base_name = input
             .file_name()
@@ -1276,7 +1275,7 @@ fn collect_disk_items(inputs: &[PathBuf], dest_subdir: &str) -> Result<Vec<DiskI
         } else {
             format!("{prefix}/{base_name}")
         };
-        collect_disk_recursive(input, &archive_rel, &mut items)?;
+        collect_disk_recursive(input, &archive_rel, exclude_canon.as_deref(), &mut items)?;
     }
     Ok(items)
 }
@@ -1284,10 +1283,17 @@ fn collect_disk_items(inputs: &[PathBuf], dest_subdir: &str) -> Result<Vec<DiskI
 fn collect_disk_recursive(
     disk_path: &Path,
     archive_path: &str,
+    exclude_canon: Option<&Path>,
     out: &mut Vec<DiskItem>,
 ) -> Result<(), ArchiveError> {
     let meta = fs::symlink_metadata(disk_path)?;
     let ft = meta.file_type();
+    if ft.is_file()
+        && let Some(ex) = exclude_canon
+        && fs::canonicalize(disk_path).ok().as_deref() == Some(ex)
+    {
+        return Ok(());
+    }
     use std::os::unix::fs::PermissionsExt;
     let mode = meta.permissions().mode() & 0o7777;
     let mtime = meta
@@ -1324,7 +1330,7 @@ fn collect_disk_recursive(
             let child_name = child.file_name();
             let child_str = child_name.to_string_lossy();
             let next_archive = format!("{archive_path}/{child_str}");
-            collect_disk_recursive(&child.path(), &next_archive, out)?;
+            collect_disk_recursive(&child.path(), &next_archive, exclude_canon, out)?;
         }
     } else if ft.is_file() {
         out.push(DiskItem {
@@ -2452,5 +2458,34 @@ mod tests {
         .unwrap();
         assert_eq!(fs::read(out_dir.join("secret.txt")).unwrap(), b"confidential");
         assert_eq!(fs::read(out_dir.join("extra.txt")).unwrap(), b"added later");
+    }
+
+    #[test]
+    fn add_to_archive_ignores_archive_itself() {
+        let tmp = TestDir::new("self-add");
+        let work = tmp.0.join("work");
+        fs::create_dir_all(&work).unwrap();
+        let note = work.join("note.txt");
+        fs::write(&note, b"hello").unwrap();
+
+        let cancel = Arc::new(AtomicBool::new(false));
+        let zip_path = work.join("bundle.zip");
+        create_archive(&zip_path, ArchiveFormat::Zip, &[note], None, None, &cancel).unwrap();
+
+        let (count, _) = add_to_archive(
+            &zip_path,
+            std::slice::from_ref(&zip_path),
+            "",
+            None,
+            None,
+            &cancel,
+        )
+        .unwrap();
+        assert_eq!(count, 0);
+
+        add_to_archive(&zip_path, &[work], "", None, None, &cancel).unwrap();
+        let listing = list_archive(&zip_path, None, None, &cancel).unwrap();
+        assert!(listing.entries.iter().any(|e| e.path == "work/note.txt"));
+        assert!(!listing.entries.iter().any(|e| e.path.ends_with("bundle.zip")));
     }
 }
