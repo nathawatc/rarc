@@ -185,7 +185,10 @@ pub(super) fn install_drop_in(
 ) {
     let drop_target = gtk::DropTarget::new(gdk::FileList::static_type(), gdk::DragAction::COPY);
     let stack_enter = stack.clone();
-    drop_target.connect_enter(move |_, _, _| {
+    drop_target.connect_enter(move |target, _, _| {
+        if target.current_drop().is_some_and(|d| d.drag().is_some()) {
+            return gdk::DragAction::empty();
+        }
         stack_enter.add_css_class("rarc-drop-active");
         gdk::DragAction::COPY
     });
@@ -198,8 +201,11 @@ pub(super) fn install_drop_in(
     let state_ref = state.clone();
     let win_ref = window.clone();
     let open_fn = open_archive.clone();
-    drop_target.connect_drop(move |_, value, _, _| {
+    drop_target.connect_drop(move |target, value, _, _| {
         stack_drop.remove_css_class("rarc-drop-active");
+        if target.current_drop().is_some_and(|d| d.drag().is_some()) {
+            return false;
+        }
         let Ok(file_list) = value.get::<gdk::FileList>() else {
             return false;
         };
