@@ -16,9 +16,9 @@ use super::ffi::{
 };
 use super::formats::archive_stem;
 use super::{
-    apply_strip_prefix, matches_selection, sanitize_entry_path, sanitize_entry_path_str,
-    sanitize_single_filename, validate_symlink_target, ArchiveEntry, ArchiveError, ArchiveListing,
-    ConflictAction, ConflictPolicy, ConflictResolution, EntryKind, ExtractSession, WorkerEvent,
+    apply_strip_prefix, sanitize_entry_path, sanitize_entry_path_str, sanitize_single_filename,
+    validate_symlink_target, ArchiveEntry, ArchiveError, ArchiveListing, ConflictAction,
+    ConflictPolicy, ConflictResolution, EntryKind, ExtractSession, SelectionFilter, WorkerEvent,
 };
 
 const PROGRESS_INTERVAL: Duration = Duration::from_millis(50);
@@ -368,6 +368,7 @@ pub fn extract_archive_with_session(
     let dest_dir = fs::canonicalize(dest_dir)?;
     let mut pass_ctx =
         PassphraseCtx::for_path(archive_path, session.password.as_deref(), event_tx, cancel);
+    let selection_filter = selected_prefixes.map(SelectionFilter::new);
     let mut files_extracted: usize = 0;
 
     loop {
@@ -418,7 +419,9 @@ pub fn extract_archive_with_session(
                 };
                 let archive_rel_str = resolve_raw_entry_path(raw_mode, sanitized, archive_path);
 
-                if !matches_selection(&archive_rel_str, selected_prefixes) {
+                if let Some(ref filter) = selection_filter
+                    && !filter.matches(&archive_rel_str)
+                {
                     let _ = ffi::raw::archive_read_data_skip(reader.as_ptr());
                     continue;
                 }

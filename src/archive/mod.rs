@@ -322,17 +322,26 @@ fn apply_strip_prefix<'a>(rel_path: &'a str, strip_prefix: Option<&str>) -> Opti
     Some(rel_path)
 }
 
-pub fn matches_selection(entry_path: &str, selected_prefixes: Option<&[String]>) -> bool {
-    let Some(prefixes) = selected_prefixes else {
-        return true;
-    };
-    prefixes.iter().any(|sel| {
-        let sel_clean = sel.trim_end_matches('/');
-        entry_path == sel_clean
-            || entry_path
-                .strip_prefix(sel_clean)
-                .is_some_and(|rest| rest.starts_with('/'))
-    })
+pub struct SelectionFilter<'a>(HashSet<&'a str>);
+
+impl<'a> SelectionFilter<'a> {
+    pub fn new(prefixes: &'a [String]) -> Self {
+        Self(prefixes.iter().map(|s| s.trim_end_matches('/')).collect())
+    }
+
+    pub fn matches(&self, entry_path: &str) -> bool {
+        if self.0.contains(entry_path) {
+            return true;
+        }
+        let mut cur = entry_path;
+        while let Some((parent, _)) = cur.rsplit_once('/') {
+            if self.0.contains(parent) {
+                return true;
+            }
+            cur = parent;
+        }
+        false
+    }
 }
 
 /// Smart root-folder rule for `--tap extract-here`:

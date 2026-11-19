@@ -15,8 +15,8 @@ use gtk::prelude::*;
 use gtk::subclass::prelude::*;
 
 use crate::archive::{
-    extract_archive_with_session, matches_selection, spawn_worker, ArchiveEntry, EntryKind,
-    ExtractSession, OperationSummary, WorkerEvent,
+    extract_archive_with_session, spawn_worker, ArchiveEntry, EntryKind, ExtractSession,
+    OperationSummary, SelectionFilter, WorkerEvent,
 };
 use crate::ui::dialogs::{prompt_password_async, ArchivePropertiesInfo};
 use crate::ui::session_temp_dir;
@@ -408,9 +408,13 @@ pub(super) fn compute_selected_bytes(
     entries: &[Rc<ArchiveEntry>],
     selected_prefixes: Option<&[String]>,
 ) -> u64 {
+    let filter = selected_prefixes.map(SelectionFilter::new);
     entries
         .iter()
-        .filter(|e| e.kind != EntryKind::Directory && matches_selection(&e.path, selected_prefixes))
+        .filter(|e| {
+            e.kind != EntryKind::Directory
+                && filter.as_ref().is_none_or(|f| f.matches(&e.path))
+        })
         .map(|e| e.size)
         .sum()
 }

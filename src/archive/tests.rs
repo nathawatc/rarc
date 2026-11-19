@@ -726,3 +726,14 @@ fn failed_rename_cleans_up_temp_sibling() {
         .collect();
     assert!(leftovers.is_empty(), "leftover temp files: {leftovers:?}");
 }
+
+#[test]
+fn selection_filter_matches_exact_and_descendants_only() {
+    let prefixes = vec!["a/b/".to_string(), "single.txt".to_string()];
+    let filter = SelectionFilter::new(&prefixes);
+    assert!(filter.matches("a/b"));
+    assert!(filter.matches("a/b/c/d.txt"));
+    assert!(filter.matches("single.txt"));
+    assert!(!filter.matches("a/bc/d.txt"));
+    assert!(!filter.matches("a"));
+}
