@@ -1,4 +1,4 @@
-# rarc
+# Rarc
 
 Lightweight, modern GTK4 archive manager, powered by `libarchive` for Thunar integration.
 
@@ -50,7 +50,17 @@ On Debian / Ubuntu:
 sudo apt install libgtk-4-dev libarchive-dev pkg-config cargo rustc
 ```
 
-## Build & Install
+## Installation
+
+### Arch Linux (AUR)
+
+```bash
+yay -S rarc
+# or
+paru -S rarc
+```
+
+### Build from source
 
 ```bash
 make build      # cargo build --release
@@ -80,7 +90,3 @@ rarc --tap <extract-here|extract-to|create> <PATHS...>
 rarc --help | -h
 rarc --version | -V
 ```
-
-## License
-
-Licensed under the GNU General Public License v3.0 — see [LICENSE](LICENSE).

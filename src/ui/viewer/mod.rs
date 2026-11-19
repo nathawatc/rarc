@@ -57,7 +57,7 @@ struct ListPage {
 pub fn launch_standalone(app: &gtk::Application, initial_archive: Option<PathBuf>) {
     let window = gtk::ApplicationWindow::builder()
         .application(app)
-        .title("rarc")
+        .title("Rarc")
         .default_width(980)
         .default_height(620)
         .build();
@@ -516,7 +516,7 @@ fn make_open_archive(
                         first_row.set_expanded(true);
                     }
 
-                    w_done.window.set_title(Some(&format!("{archive_name} - rarc")));
+                    w_done.window.set_title(Some(&format!("{archive_name} - Rarc")));
                     w_done.extract_btn.set_sensitive(true);
                     w_done.test_btn.set_sensitive(true);
                     w_done.props_btn.set_sensitive(true);
