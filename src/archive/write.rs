@@ -319,9 +319,13 @@ fn collect_disk_items(
     dest_subdir: &str,
     exclude_path: Option<&Path>,
 ) -> Result<Vec<DiskItem>, ArchiveError> {
+    use std::os::unix::fs::MetadataExt;
+
     let mut items = Vec::new();
     let prefix = dest_subdir.trim_matches('/');
-    let exclude_canon = exclude_path.and_then(|p| fs::canonicalize(p).ok());
+    let exclude_id = exclude_path
+        .and_then(|p| fs::metadata(p).ok())
+        .map(|m| (m.dev(), m.ino()));
     for input in inputs {
         let base_name = input
             .file_name()
@@ -332,7 +336,7 @@ fn collect_disk_items(
         } else {
             format!("{prefix}/{base_name}")
         };
-        collect_disk_recursive(input, &archive_rel, exclude_canon.as_deref(), &mut items)?;
+        collect_disk_recursive(input, &archive_rel, exclude_id, &mut items)?;
     }
     Ok(items)
 }
@@ -340,18 +344,16 @@ fn collect_disk_items(
 fn collect_disk_recursive(
     disk_path: &Path,
     archive_path: &str,
-    exclude_canon: Option<&Path>,
+    exclude_id: Option<(u64, u64)>,
     out: &mut Vec<DiskItem>,
 ) -> Result<(), ArchiveError> {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
     let meta = fs::symlink_metadata(disk_path)?;
     let ft = meta.file_type();
-    if ft.is_file()
-        && let Some(ex) = exclude_canon
-        && fs::canonicalize(disk_path).ok().as_deref() == Some(ex)
-    {
+    if ft.is_file() && exclude_id == Some((meta.dev(), meta.ino())) {
         return Ok(());
     }
-    use std::os::unix::fs::PermissionsExt;
     let mode = meta.permissions().mode() & 0o7777;
     let mtime = meta
         .modified()
@@ -387,7 +389,7 @@ fn collect_disk_recursive(
             let child_name = child.file_name();
             let child_str = child_name.to_string_lossy();
             let next_archive = format!("{archive_path}/{child_str}");
-            collect_disk_recursive(&child.path(), &next_archive, exclude_canon, out)?;
+            collect_disk_recursive(&child.path(), &next_archive, exclude_id, out)?;
         }
     } else if ft.is_file() {
         out.push(DiskItem {
