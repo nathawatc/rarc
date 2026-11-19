@@ -730,6 +730,7 @@ pub struct PropertyEntry {
 
 pub struct ArchivePropertiesInfo {
     pub archive_path: PathBuf,
+    pub format_name: String,
     pub entry_count: usize,
     pub total_uncompressed: u64,
     pub encrypted_count: usize,
@@ -797,21 +798,41 @@ pub fn show_properties_dialog(
                 .and_then(|s| s.to_str())
                 .unwrap_or("archive")
                 .to_string();
-            let disk_size = std::fs::metadata(&archive_info.archive_path)
-                .map(|m| format!("{} ({} bytes)", format_size(m.len()), m.len()))
-                .unwrap_or_else(|_| "—".to_string());
+            let meta = std::fs::metadata(&archive_info.archive_path).ok();
+            let disk_bytes = meta.as_ref().map(|m| m.len());
+            let disk_size = disk_bytes
+                .map(|len| format!("{} ({len} bytes)", format_size(len)))
+                .unwrap_or_else(|| "—".to_string());
+            let modified = meta
+                .and_then(|m| m.modified().ok())
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| d.as_secs() as i64);
+            let ratio = match disk_bytes {
+                Some(len) if len > 0 => {
+                    format!("{:.2}:1", archive_info.total_uncompressed as f64 / len as f64)
+                }
+                _ => "—".to_string(),
+            };
+            let fmt = if archive_info.format_name.is_empty() {
+                "Archive".to_string()
+            } else {
+                archive_info.format_name.clone()
+            };
             rows.push(("Name", name));
             rows.push(("Location", archive_info.archive_path.display().to_string()));
+            rows.push(("Format", fmt));
+            rows.push(("Modified Date", format_mtime(modified)));
             rows.push(("Archive Size", disk_size));
-            rows.push(("Entries", archive_info.entry_count.to_string()));
             rows.push((
-                "Uncompressed Size",
+                "Content Size",
                 format!(
                     "{} ({} bytes)",
                     format_size(archive_info.total_uncompressed),
                     archive_info.total_uncompressed
                 ),
             ));
+            rows.push(("Compression Ratio", ratio));
+            rows.push(("Entries", archive_info.entry_count.to_string()));
             rows.push((
                 "Encrypted Entries",
                 archive_info.encrypted_count.to_string(),

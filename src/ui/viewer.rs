@@ -289,6 +289,7 @@ impl ArchiveDragProvider {
 struct ViewerState {
     current_archive: Option<PathBuf>,
     cached_password: Option<String>,
+    format_name: String,
     current_dir: String,
     search_query: String,
     stage_seq: u64,
@@ -337,6 +338,12 @@ pub fn launch_standalone(app: &gtk::Application, initial_archive: Option<PathBuf
         .tooltip_text("Test archive integrity")
         .sensitive(false)
         .build();
+    let props_btn = gtk::Button::builder()
+        .label("Properties")
+        .icon_name("document-properties-symbolic")
+        .tooltip_text("Archive properties")
+        .sensitive(false)
+        .build();
 
     let search_entry = gtk::SearchEntry::builder()
         .placeholder_text("Filter entries…")
@@ -347,6 +354,7 @@ pub fn launch_standalone(app: &gtk::Application, initial_archive: Option<PathBuf
     header.pack_start(&new_btn);
     header.pack_start(&extract_btn);
     header.pack_start(&test_btn);
+    header.pack_start(&props_btn);
     header.pack_end(&search_entry);
     // Keep title out of HeaderBar so it does not duplicate the window title bar.
     header.set_title_widget(Some(&gtk::Box::new(gtk::Orientation::Horizontal, 0)));
@@ -513,7 +521,7 @@ pub fn launch_standalone(app: &gtk::Application, initial_archive: Option<PathBuf
             act_open_with.set_enabled(single_file);
             act_extract.set_enabled(count > 0);
             act_copy.set_enabled(count > 0);
-            act_props.set_enabled(true);
+            act_props.set_enabled(count > 0);
 
             let rect = if let Some(pt) =
                 src_widget.compute_point(&column_ref, &gtk::graphene::Point::new(x as f32, y as f32))
@@ -690,6 +698,7 @@ pub fn launch_standalone(app: &gtk::Application, initial_archive: Option<PathBuf
         let stack_ref = stack.clone();
         let extract_ref = extract_btn.clone();
         let test_ref = test_btn.clone();
+        let props_ref = props_btn.clone();
         let nav = navigate_to.clone();
 
         Rc::new(move |archive_path: PathBuf| {
@@ -723,6 +732,7 @@ pub fn launch_standalone(app: &gtk::Application, initial_archive: Option<PathBuf
             let stack_done = stack_ref.clone();
             let extract_done = extract_ref.clone();
             let test_done = test_ref.clone();
+            let props_done = props_ref.clone();
             let nav_done = nav.clone();
             let path_done = archive_path.clone();
 
@@ -765,6 +775,7 @@ pub fn launch_standalone(app: &gtk::Application, initial_archive: Option<PathBuf
                             let same_archive = st.current_archive.as_ref() == Some(&path_done);
                             st.current_archive = Some(path_done.clone());
                             st.cached_password = listing.password;
+                            st.format_name = listing.format_name;
                             st.entry_count = entry_count;
                             st.total_uncompressed = total_uncompressed;
                             st.encrypted_count = encrypted_count;
@@ -777,6 +788,7 @@ pub fn launch_standalone(app: &gtk::Application, initial_archive: Option<PathBuf
                         win_done.set_title(Some(&format!("{archive_name} - rarc")));
                         extract_done.set_sensitive(true);
                         test_done.set_sensitive(true);
+                        props_done.set_sensitive(true);
                         stack_done.set_visible_child_name("list");
                         nav_done(target_dir, true);
                     }
@@ -902,6 +914,17 @@ pub fn launch_standalone(app: &gtk::Application, initial_archive: Option<PathBuf
         });
     }
 
+    // HeaderBar: Archive Properties button
+    {
+        let win_ref = window.clone();
+        let state_ref = state.clone();
+        props_btn.connect_clicked(move |_| {
+            if let Some(info) = archive_properties_info(&state_ref.borrow()) {
+                show_properties_dialog(win_ref.upcast_ref(), &[], &info);
+            }
+        });
+    }
+
     // Context menu action handlers
     {
         let win_ref = window.clone();
@@ -952,21 +975,16 @@ pub fn launch_standalone(app: &gtk::Application, initial_archive: Option<PathBuf
         let state_ref = state.clone();
         let selection_ref = selection.clone();
         act_props.connect_activate(move |_, _| {
-            let st = state_ref.borrow();
-            let Some(ref archive_path) = st.current_archive else {
+            let Some(info) = archive_properties_info(&state_ref.borrow()) else {
                 return;
             };
             let selected: Vec<PropertyEntry> = collect_selected_rows(&selection_ref)
                 .into_iter()
                 .map(|r| r.to_property_entry())
                 .collect();
-            let info = ArchivePropertiesInfo {
-                archive_path: archive_path.clone(),
-                entry_count: st.entry_count,
-                total_uncompressed: st.total_uncompressed,
-                encrypted_count: st.encrypted_count,
-            };
-            show_properties_dialog(win_ref.upcast_ref(), &selected, &info);
+            if !selected.is_empty() {
+                show_properties_dialog(win_ref.upcast_ref(), &selected, &info);
+            }
         });
     }
 
@@ -1118,6 +1136,16 @@ pub fn launch_standalone(app: &gtk::Application, initial_archive: Option<PathBuf
     if let Some(path) = initial_archive {
         open_archive(path);
     }
+}
+
+fn archive_properties_info(st: &ViewerState) -> Option<ArchivePropertiesInfo> {
+    st.current_archive.as_ref().map(|p| ArchivePropertiesInfo {
+        archive_path: p.clone(),
+        format_name: st.format_name.clone(),
+        entry_count: st.entry_count,
+        total_uncompressed: st.total_uncompressed,
+        encrypted_count: st.encrypted_count,
+    })
 }
 
 fn window_upcast(win: &gtk::ApplicationWindow) -> &gtk::Window {
