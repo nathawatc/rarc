@@ -1246,7 +1246,9 @@ fn activate_row(
                     launcher.set_always_ask(always_ask);
                     let win_err = win_launch.clone();
                     launcher.launch(Some(&win_launch), gio::Cancellable::NONE, move |lres| {
-                        if let Err(e) = lres {
+                        if let Err(e) = lres
+                            && !is_user_dismissed_error(&e)
+                        {
                             show_error_dialog(
                                 Some(&win_err),
                                 "Unable to Launch File",
@@ -1262,6 +1264,13 @@ fn activate_row(
             }
         },
     );
+}
+
+fn is_user_dismissed_error(err: &glib::Error) -> bool {
+    err.matches(gtk::DialogError::Dismissed)
+        || err.matches(gtk::DialogError::Cancelled)
+        || err.matches(gio::IOErrorEnum::Cancelled)
+        || err.message().to_ascii_lowercase().contains("dismissed")
 }
 
 fn start_extract_dialog(
