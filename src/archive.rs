@@ -465,39 +465,25 @@ pub fn list_archive(
         let mut format_name = String::new();
 
         unsafe {
-            let mut entry: *mut ffi::archive_entry = ptr::null_mut();
             loop {
                 if cancel.load(Ordering::Relaxed) {
                     return Err(ArchiveError::Cancelled);
                 }
-                let rc = ffi::archive_read_next_header(reader.as_ptr(), &mut entry);
-                if rc == ffi::ARCHIVE_EOF {
-                    break;
-                }
-                if rc != ffi::ARCHIVE_OK && rc != ffi::ARCHIVE_WARN {
-                    if first
-                        && !raw_mode
-                        && ffi::archive_filter_code(reader.as_ptr(), 0) != ffi::ARCHIVE_FILTER_NONE
-                    {
+                let entry = match read_next_header_step(
+                    reader.as_ptr(),
+                    archive_path,
+                    &pass_ctx,
+                    &mut first,
+                    !raw_mode,
+                )? {
+                    HeaderStep::Eof => break,
+                    HeaderStep::RetryRaw => {
                         needs_raw_retry = true;
                         break;
                     }
-                    return Err(reader_error(reader.as_ptr(), &pass_ctx));
-                }
-
+                    HeaderStep::Entry(entry) => entry,
+                };
                 if first {
-                    if !raw_mode {
-                        let fmt =
-                            ffi::archive_format(reader.as_ptr()) & ffi::ARCHIVE_FORMAT_BASE_MASK;
-                        let is_mtree_ext = archive_path
-                            .extension()
-                            .and_then(|e| e.to_str())
-                            .is_some_and(|e| e.eq_ignore_ascii_case("mtree"));
-                        if fmt == ffi::ARCHIVE_FORMAT_MTREE && !is_mtree_ext {
-                            needs_raw_retry = true;
-                            break;
-                        }
-                    }
                     format_name = describe_reader_format(reader.as_ptr());
                 }
                 first = false;
@@ -566,109 +552,182 @@ pub fn list_archive(
 pub fn test_archive(
     archive_path: &Path,
     initial_password: Option<&str>,
+    known: Option<(u64, bool)>,
     event_tx: Option<&Sender<WorkerEvent>>,
     cancel: &Arc<AtomicBool>,
 ) -> Result<(usize, u64, Option<String>), ArchiveError> {
-    let listing = list_archive(archive_path, initial_password, event_tx, cancel)?;
-    let bytes_total: u64 = listing.entries.iter().map(|e| e.size).sum();
-
+    let (bytes_total, mut raw_mode) = known.unwrap_or((0, false));
     let mut pass_ctx = PassphraseCtx::new(
         archive_path
             .file_name()
             .and_then(|s| s.to_str())
             .unwrap_or("archive")
             .to_string(),
-        listing.password.as_deref().or(initial_password),
+        initial_password,
         event_tx.cloned(),
         cancel.clone(),
     );
 
-    let reader = open_reader(archive_path, listing.is_raw, &mut pass_ctx)?;
-    let mut entries_checked = 0usize;
-    let mut bytes_done = 0u64;
+    loop {
+        if cancel.load(Ordering::Relaxed) {
+            return Err(ArchiveError::Cancelled);
+        }
+        let reader = open_reader(archive_path, raw_mode, &mut pass_ctx)?;
+        let mut entries_checked = 0usize;
+        let mut bytes_done = 0u64;
+        let mut first = true;
+        let mut needs_raw_retry = false;
 
-    unsafe {
-        let mut entry: *mut ffi::archive_entry = ptr::null_mut();
-        loop {
-            if cancel.load(Ordering::Relaxed) {
-                return Err(ArchiveError::Cancelled);
-            }
-            let rc = ffi::archive_read_next_header(reader.as_ptr(), &mut entry);
-            if rc == ffi::ARCHIVE_EOF {
-                break;
-            }
-            if rc != ffi::ARCHIVE_OK && rc != ffi::ARCHIVE_WARN {
-                return Err(reader_error(reader.as_ptr(), &pass_ctx));
-            }
-
-            let raw_name = entry_pathname_string(entry)?;
-            let Some(sanitized) = sanitize_entry_path(&raw_name)? else {
-                continue;
-            };
-            let label = if listing.is_raw && path_to_slash_string(&sanitized) == "data" {
-                archive_stem(archive_path)
-            } else {
-                path_to_slash_string(&sanitized)
-            };
-
-            let filetype = ffi::archive_entry_filetype(entry);
-            let is_dir = (filetype & ffi::AE_IFMT) == ffi::AE_IFDIR;
-            if (filetype & ffi::AE_IFMT) == ffi::AE_IFLNK
-                && let Some(sym) = entry_symlink_string(entry)
-            {
-                validate_symlink_target(&sanitized, &sym)?;
-            }
-
-            if let Some(tx) = event_tx {
-                let _ = tx.try_send(WorkerEvent::Progress {
-                    current_file: label.clone(),
-                    bytes_done,
-                    bytes_total,
-                });
-            }
-
-            if !is_dir {
-                let mut buffer: *const c_void = ptr::null();
-                let mut size: usize = 0;
-                let mut offset: i64 = 0;
-                loop {
-                    if cancel.load(Ordering::Relaxed) {
-                        return Err(ArchiveError::Cancelled);
-                    }
-                    let drc = ffi::archive_read_data_block(
-                        reader.as_ptr(),
-                        &mut buffer,
-                        &mut size,
-                        &mut offset,
-                    );
-                    if drc == ffi::ARCHIVE_EOF {
+        unsafe {
+            loop {
+                if cancel.load(Ordering::Relaxed) {
+                    return Err(ArchiveError::Cancelled);
+                }
+                let entry = match read_next_header_step(
+                    reader.as_ptr(),
+                    archive_path,
+                    &pass_ctx,
+                    &mut first,
+                    known.is_none() && !raw_mode,
+                )? {
+                    HeaderStep::Eof => break,
+                    HeaderStep::RetryRaw => {
+                        needs_raw_retry = true;
                         break;
                     }
-                    if drc != ffi::ARCHIVE_OK && drc != ffi::ARCHIVE_WARN {
-                        return Err(reader_error(reader.as_ptr(), &pass_ctx));
-                    }
-                    bytes_done += size as u64;
-                    if let Some(tx) = event_tx {
-                        let _ = tx.try_send(WorkerEvent::Progress {
-                            current_file: label.clone(),
-                            bytes_done,
-                            bytes_total,
-                        });
+                    HeaderStep::Entry(entry) => entry,
+                };
+                first = false;
+
+                let raw_name = entry_pathname_string(entry)?;
+                let Some(sanitized) = sanitize_entry_path(&raw_name)? else {
+                    continue;
+                };
+                let label = if raw_mode && path_to_slash_string(&sanitized) == "data" {
+                    archive_stem(archive_path)
+                } else {
+                    path_to_slash_string(&sanitized)
+                };
+
+                let filetype = ffi::archive_entry_filetype(entry);
+                let is_dir = (filetype & ffi::AE_IFMT) == ffi::AE_IFDIR;
+                if (filetype & ffi::AE_IFMT) == ffi::AE_IFLNK
+                    && let Some(sym) = entry_symlink_string(entry)
+                {
+                    validate_symlink_target(&sanitized, &sym)?;
+                }
+
+                if let Some(tx) = event_tx {
+                    let _ = tx.try_send(WorkerEvent::Progress {
+                        current_file: label.clone(),
+                        bytes_done,
+                        bytes_total,
+                    });
+                }
+
+                if !is_dir {
+                    let mut buffer: *const c_void = ptr::null();
+                    let mut size: usize = 0;
+                    let mut offset: i64 = 0;
+                    loop {
+                        if cancel.load(Ordering::Relaxed) {
+                            return Err(ArchiveError::Cancelled);
+                        }
+                        let drc = ffi::archive_read_data_block(
+                            reader.as_ptr(),
+                            &mut buffer,
+                            &mut size,
+                            &mut offset,
+                        );
+                        if drc == ffi::ARCHIVE_EOF {
+                            break;
+                        }
+                        if drc != ffi::ARCHIVE_OK && drc != ffi::ARCHIVE_WARN {
+                            return Err(reader_error(reader.as_ptr(), &pass_ctx));
+                        }
+                        bytes_done += size as u64;
+                        if let Some(tx) = event_tx {
+                            let _ = tx.try_send(WorkerEvent::Progress {
+                                current_file: label.clone(),
+                                bytes_done,
+                                bytes_total,
+                            });
+                        }
                     }
                 }
+                entries_checked += 1;
             }
-            entries_checked += 1;
         }
-    }
 
-    Ok((entries_checked, bytes_done, pass_ctx.last_password()))
+        if needs_raw_retry {
+            raw_mode = true;
+            continue;
+        }
+        return Ok((entries_checked, bytes_done, pass_ctx.last_password()));
+    }
 }
 
-/// Extracts all or selected entries from `archive_path` into `dest_dir`.
-///
-/// If `selected_prefixes` is `Some`, only entries matching those exact paths or residing under
-/// a selected directory prefix are extracted. If `strip_prefix` is `Some`, that leading folder
-/// prefix is stripped when computing destination paths (useful for extracting from nested view).
+/// Shared state preserved across multi-archive extraction runs.
+#[derive(Default)]
+pub struct ExtractSession {
+    conflict_policy: Option<ConflictPolicy>,
+    pub password: Option<String>,
+    pub bytes_done: u64,
+    pub bytes_total: u64,
+}
+
+impl ExtractSession {
+    pub fn new(password: Option<String>, bytes_total: u64) -> Self {
+        Self {
+            conflict_policy: None,
+            password,
+            bytes_done: 0,
+            bytes_total,
+        }
+    }
+}
+
+enum HeaderStep {
+    Eof,
+    Entry(*mut ffi::archive_entry),
+    RetryRaw,
+}
+
+unsafe fn read_next_header_step(
+    reader: *mut ffi::archive,
+    archive_path: &Path,
+    pass_ctx: &PassphraseCtx,
+    first: &mut bool,
+    allow_raw_retry: bool,
+) -> Result<HeaderStep, ArchiveError> {
+    let mut entry: *mut ffi::archive_entry = ptr::null_mut();
+    let rc = unsafe { ffi::archive_read_next_header(reader, &mut entry) };
+    if rc == ffi::ARCHIVE_EOF {
+        return Ok(HeaderStep::Eof);
+    }
+    if rc != ffi::ARCHIVE_OK && rc != ffi::ARCHIVE_WARN {
+        if *first
+            && allow_raw_retry
+            && unsafe { ffi::archive_filter_code(reader, 0) } != ffi::ARCHIVE_FILTER_NONE
+        {
+            return Ok(HeaderStep::RetryRaw);
+        }
+        return Err(reader_error(reader, pass_ctx));
+    }
+    if *first && allow_raw_retry {
+        let fmt = unsafe { ffi::archive_format(reader) } & ffi::ARCHIVE_FORMAT_BASE_MASK;
+        let is_mtree_ext = archive_path
+            .extension()
+            .and_then(|e| e.to_str())
+            .is_some_and(|e| e.eq_ignore_ascii_case("mtree"));
+        if fmt == ffi::ARCHIVE_FORMAT_MTREE && !is_mtree_ext {
+            return Ok(HeaderStep::RetryRaw);
+        }
+    }
+    Ok(HeaderStep::Entry(entry))
+}
+
+#[cfg(test)]
 pub fn extract_archive(
     archive_path: &Path,
     dest_dir: &Path,
@@ -678,15 +737,33 @@ pub fn extract_archive(
     event_tx: Option<&Sender<WorkerEvent>>,
     cancel: &Arc<AtomicBool>,
 ) -> Result<(usize, Option<String>), ArchiveError> {
-    let listing = list_archive(archive_path, initial_password, event_tx, cancel)?;
-    let bytes_total: u64 = listing
-        .entries
-        .iter()
-        .filter(|e| matches_selection(&e.path, selected_prefixes))
-        .map(|e| e.size)
-        .sum();
-    let raw_mode = listing.is_raw;
+    let mut session = ExtractSession::new(initial_password.map(ToOwned::to_owned), 0);
+    let count = extract_archive_with_session(
+        archive_path,
+        dest_dir,
+        selected_prefixes,
+        strip_prefix,
+        None,
+        &mut session,
+        event_tx,
+        cancel,
+    )?;
+    Ok((count, session.password))
+}
 
+/// Single-pass extraction reusing shared conflict choices, password, and cumulative progress.
+#[allow(clippy::too_many_arguments)]
+pub fn extract_archive_with_session(
+    archive_path: &Path,
+    dest_dir: &Path,
+    selected_prefixes: Option<&[String]>,
+    strip_prefix: Option<&str>,
+    known_raw: Option<bool>,
+    session: &mut ExtractSession,
+    event_tx: Option<&Sender<WorkerEvent>>,
+    cancel: &Arc<AtomicBool>,
+) -> Result<usize, ArchiveError> {
+    let mut raw_mode = known_raw.unwrap_or(false);
     fs::create_dir_all(dest_dir)?;
     let dest_dir = fs::canonicalize(dest_dir)?;
     let mut pass_ctx = PassphraseCtx::new(
@@ -695,145 +772,170 @@ pub fn extract_archive(
             .and_then(|s| s.to_str())
             .unwrap_or("archive")
             .to_string(),
-        listing.password.as_deref().or(initial_password),
+        session.password.as_deref(),
         event_tx.cloned(),
         cancel.clone(),
     );
 
-    let reader = open_reader(archive_path, raw_mode, &mut pass_ctx)?;
-    let disk_writer = WriteDiskArchive::new()?;
-
-    let mut bytes_done: u64 = 0;
     let mut files_extracted: usize = 0;
-    let mut conflict_policy: Option<ConflictPolicy> = None;
 
-    unsafe {
-        let mut entry: *mut ffi::archive_entry = ptr::null_mut();
-        loop {
-            if cancel.load(Ordering::Relaxed) {
-                return Err(ArchiveError::Cancelled);
-            }
-            let rc = ffi::archive_read_next_header(reader.as_ptr(), &mut entry);
-            if rc == ffi::ARCHIVE_EOF {
-                break;
-            }
-            if rc != ffi::ARCHIVE_OK && rc != ffi::ARCHIVE_WARN {
-                return Err(reader_error(reader.as_ptr(), &pass_ctx));
-            }
+    loop {
+        if cancel.load(Ordering::Relaxed) {
+            return Err(ArchiveError::Cancelled);
+        }
+        let reader = open_reader(archive_path, raw_mode, &mut pass_ctx)?;
+        let disk_writer = WriteDiskArchive::new()?;
+        let mut first = true;
+        let mut needs_raw_retry = false;
 
-            let raw_name = entry_pathname_string(entry)?;
-            let Some(sanitized) = sanitize_entry_path(&raw_name)? else {
-                continue;
-            };
-            let archive_rel_str = if raw_mode && path_to_slash_string(&sanitized) == "data" {
-                archive_stem(archive_path)
-            } else {
-                path_to_slash_string(&sanitized)
-            };
-
-            if !matches_selection(&archive_rel_str, selected_prefixes) {
-                let _ = ffi::archive_read_data_skip(reader.as_ptr());
-                continue;
-            }
-
-            let Some(archive_rel_str) = apply_strip_prefix(&archive_rel_str, strip_prefix) else {
-                continue;
-            };
-
-            let Some(mut rel_out) = sanitize_entry_path(&archive_rel_str)? else {
-                continue;
-            };
-
-            let filetype = ffi::archive_entry_filetype(entry);
-            let is_dir = (filetype & ffi::AE_IFMT) == ffi::AE_IFDIR;
-            let is_symlink = (filetype & ffi::AE_IFMT) == ffi::AE_IFLNK;
-
-            if is_symlink
-                && let Some(sym) = entry_symlink_string(entry)
-            {
-                validate_symlink_target(&rel_out, &sym)?;
-            }
-
-            let mut target_path = dest_dir.join(&rel_out);
-            let mut skip_entry = false;
-
-            while !is_dir && target_path.symlink_metadata().is_ok() {
-                match resolve_conflict(&target_path, &mut conflict_policy, event_tx, cancel)? {
-                    ConflictAction::Write => break,
-                    ConflictAction::Skip => {
-                        skip_entry = true;
+        unsafe {
+            loop {
+                if cancel.load(Ordering::Relaxed) {
+                    return Err(ArchiveError::Cancelled);
+                }
+                let entry = match read_next_header_step(
+                    reader.as_ptr(),
+                    archive_path,
+                    &pass_ctx,
+                    &mut first,
+                    known_raw.is_none() && !raw_mode,
+                )? {
+                    HeaderStep::Eof => break,
+                    HeaderStep::RetryRaw => {
+                        needs_raw_retry = true;
                         break;
                     }
-                    ConflictAction::Rename(new_name) => {
-                        let safe_name = sanitize_single_filename(&new_name)?;
-                        rel_out.set_file_name(safe_name);
-                        target_path = dest_dir.join(&rel_out);
+                    HeaderStep::Entry(entry) => entry,
+                };
+                first = false;
+
+                let raw_name = entry_pathname_string(entry)?;
+                let Some(sanitized) = sanitize_entry_path(&raw_name)? else {
+                    continue;
+                };
+                let archive_rel_str = if raw_mode && path_to_slash_string(&sanitized) == "data" {
+                    archive_stem(archive_path)
+                } else {
+                    path_to_slash_string(&sanitized)
+                };
+
+                if !matches_selection(&archive_rel_str, selected_prefixes) {
+                    let _ = ffi::archive_read_data_skip(reader.as_ptr());
+                    continue;
+                }
+
+                let Some(archive_rel_str) = apply_strip_prefix(&archive_rel_str, strip_prefix)
+                else {
+                    continue;
+                };
+
+                let Some(mut rel_out) = sanitize_entry_path(&archive_rel_str)? else {
+                    continue;
+                };
+
+                let filetype = ffi::archive_entry_filetype(entry);
+                let is_dir = (filetype & ffi::AE_IFMT) == ffi::AE_IFDIR;
+                let is_symlink = (filetype & ffi::AE_IFMT) == ffi::AE_IFLNK;
+
+                if is_symlink
+                    && let Some(sym) = entry_symlink_string(entry)
+                {
+                    validate_symlink_target(&rel_out, &sym)?;
+                }
+
+                let mut target_path = dest_dir.join(&rel_out);
+                let mut skip_entry = false;
+
+                while !is_dir && target_path.symlink_metadata().is_ok() {
+                    match resolve_conflict(
+                        &target_path,
+                        &mut session.conflict_policy,
+                        event_tx,
+                        cancel,
+                    )? {
+                        ConflictAction::Write => break,
+                        ConflictAction::Skip => {
+                            skip_entry = true;
+                            break;
+                        }
+                        ConflictAction::Rename(new_name) => {
+                            let safe_name = sanitize_single_filename(&new_name)?;
+                            rel_out.set_file_name(safe_name);
+                            target_path = dest_dir.join(&rel_out);
+                        }
                     }
                 }
-            }
-            if skip_entry {
-                let _ = ffi::archive_read_data_skip(reader.as_ptr());
-                continue;
-            }
+                if skip_entry {
+                    let _ = ffi::archive_read_data_skip(reader.as_ptr());
+                    continue;
+                }
 
-            if let Some(tx) = event_tx {
-                let _ = tx.try_send(WorkerEvent::Progress {
-                    current_file: archive_rel_str.clone(),
-                    bytes_done,
-                    bytes_total,
-                });
-            }
+                if let Some(tx) = event_tx {
+                    let _ = tx.try_send(WorkerEvent::Progress {
+                        current_file: archive_rel_str.clone(),
+                        bytes_done: session.bytes_done,
+                        bytes_total: session.bytes_total,
+                    });
+                }
 
-            let target_cstr = path_to_cstring(&target_path)?;
-            ffi::archive_entry_set_pathname(entry, target_cstr.as_ptr());
+                let target_cstr = path_to_cstring(&target_path)?;
+                ffi::archive_entry_set_pathname(entry, target_cstr.as_ptr());
 
-            if let Some(hl_str) = entry_hardlink_string(entry) {
-                let Some(safe_hl) = sanitize_entry_path(&hl_str)? else {
-                    return Err(ArchiveError::UnsafePath(hl_str));
-                };
-                let hl_rel = path_to_slash_string(&safe_hl);
-                let stripped_hl = apply_strip_prefix(&hl_rel, strip_prefix)
-                    .and_then(|s| sanitize_entry_path(&s).ok().flatten())
-                    .unwrap_or(safe_hl);
-                let hl_dest = dest_dir.join(stripped_hl);
-                let hl_cstr = path_to_cstring(&hl_dest)?;
-                ffi::archive_entry_set_hardlink(entry, hl_cstr.as_ptr());
-            }
+                if let Some(hl_str) = entry_hardlink_string(entry) {
+                    let Some(safe_hl) = sanitize_entry_path(&hl_str)? else {
+                        return Err(ArchiveError::UnsafePath(hl_str));
+                    };
+                    let hl_rel = path_to_slash_string(&safe_hl);
+                    let stripped_hl = apply_strip_prefix(&hl_rel, strip_prefix)
+                        .and_then(|s| sanitize_entry_path(&s).ok().flatten())
+                        .unwrap_or(safe_hl);
+                    let hl_dest = dest_dir.join(stripped_hl);
+                    let hl_cstr = path_to_cstring(&hl_dest)?;
+                    ffi::archive_entry_set_hardlink(entry, hl_cstr.as_ptr());
+                }
 
-            let hdr_rc = ffi::archive_write_header(disk_writer.as_ptr(), entry);
-            if hdr_rc != ffi::ARCHIVE_OK && hdr_rc != ffi::ARCHIVE_WARN {
-                return Err(ArchiveError::LibArchive(archive_err_string(
-                    disk_writer.as_ptr(),
-                )));
-            }
+                let hdr_rc = ffi::archive_write_header(disk_writer.as_ptr(), entry);
+                if hdr_rc != ffi::ARCHIVE_OK && hdr_rc != ffi::ARCHIVE_WARN {
+                    return Err(ArchiveError::LibArchive(archive_err_string(
+                        disk_writer.as_ptr(),
+                    )));
+                }
 
-            if !is_dir {
-                copy_archive_data(
-                    reader.as_ptr(),
-                    disk_writer.as_ptr(),
-                    &pass_ctx,
-                    &mut bytes_done,
-                    bytes_total,
-                    &archive_rel_str,
-                    event_tx,
-                    cancel,
-                )?;
-            }
+                if !is_dir {
+                    copy_archive_data(
+                        reader.as_ptr(),
+                        disk_writer.as_ptr(),
+                        &pass_ctx,
+                        &mut session.bytes_done,
+                        session.bytes_total,
+                        &archive_rel_str,
+                        event_tx,
+                        cancel,
+                    )?;
+                }
 
-            let fin_rc = ffi::archive_write_finish_entry(disk_writer.as_ptr());
-            if fin_rc != ffi::ARCHIVE_OK && fin_rc != ffi::ARCHIVE_WARN {
-                return Err(ArchiveError::LibArchive(archive_err_string(
-                    disk_writer.as_ptr(),
-                )));
-            }
+                let fin_rc = ffi::archive_write_finish_entry(disk_writer.as_ptr());
+                if fin_rc != ffi::ARCHIVE_OK && fin_rc != ffi::ARCHIVE_WARN {
+                    return Err(ArchiveError::LibArchive(archive_err_string(
+                        disk_writer.as_ptr(),
+                    )));
+                }
 
-            if !is_dir {
-                files_extracted += 1;
+                if !is_dir {
+                    files_extracted += 1;
+                }
             }
         }
-    }
 
-    Ok((files_extracted, pass_ctx.last_password()))
+        if needs_raw_retry {
+            raw_mode = true;
+            continue;
+        }
+        if let Some(pw) = pass_ctx.last_password() {
+            session.password = Some(pw);
+        }
+        return Ok(files_extracted);
+    }
 }
 
 /// Creates a new archive at `output_path` from `inputs`.
@@ -1164,7 +1266,7 @@ fn infer_writable_from_extension(path: &Path) -> Result<WritableSpec, ArchiveErr
     }
 }
 
-fn matches_selection(entry_path: &str, selected_prefixes: Option<&[String]>) -> bool {
+pub fn matches_selection(entry_path: &str, selected_prefixes: Option<&[String]>) -> bool {
     let Some(prefixes) = selected_prefixes else {
         return true;
     };
@@ -2384,7 +2486,7 @@ mod tests {
         let zip_path = tmp.0.join("valid.zip");
         create_archive(&zip_path, ArchiveFormat::Zip, &[input], None, None, &cancel).unwrap();
 
-        let (entries, bytes, _) = test_archive(&zip_path, None, None, &cancel).unwrap();
+        let (entries, bytes, _) = test_archive(&zip_path, None, None, None, &cancel).unwrap();
         assert_eq!(entries, 1);
         assert_eq!(bytes, 4096);
 
@@ -2395,7 +2497,7 @@ mod tests {
         raw[mid + 1] ^= 0xff;
         let corrupt_zip = tmp.0.join("corrupt.zip");
         fs::write(&corrupt_zip, raw).unwrap();
-        assert!(test_archive(&corrupt_zip, None, None, &cancel).is_err());
+        assert!(test_archive(&corrupt_zip, None, None, None, &cancel).is_err());
     }
 
     #[test]
@@ -2571,5 +2673,75 @@ mod tests {
         .unwrap();
         assert_eq!(fs::read(dest.join("orig.txt")).unwrap(), b"links");
         assert_eq!(fs::read(dest.join("alias.txt")).unwrap(), b"links");
+    }
+
+    #[test]
+    fn extract_session_reuses_password_and_conflict_policy() {
+        let tmp = TestDir::new("batch-session");
+        let f1 = tmp.0.join("shared.txt");
+        let f2 = tmp.0.join("other.txt");
+        fs::write(&f1, b"first").unwrap();
+        let z1 = tmp.0.join("one.zip");
+        let cancel = Arc::new(AtomicBool::new(false));
+        create_archive(&z1, ArchiveFormat::Zip, &[f1], Some("pw"), None, &cancel).unwrap();
+
+        fs::write(tmp.0.join("shared.txt"), b"second").unwrap();
+        let f1_again = tmp.0.join("shared.txt");
+        fs::write(&f2, b"tail").unwrap();
+        let z2 = tmp.0.join("two.zip");
+        create_archive(
+            &z2,
+            ArchiveFormat::Zip,
+            &[f1_again, f2],
+            Some("pw"),
+            None,
+            &cancel,
+        )
+        .unwrap();
+
+        let out_dir = tmp.0.join("dest");
+        fs::create_dir_all(&out_dir).unwrap();
+        fs::write(out_dir.join("shared.txt"), b"existing").unwrap();
+
+        let (tx, rx) = async_channel::unbounded();
+        let c = cancel.clone();
+        let o = out_dir.clone();
+        let handle = std::thread::spawn(move || {
+            let mut session = ExtractSession::new(None, 0);
+            extract_archive_with_session(&z1, &o, None, None, None, &mut session, Some(&tx), &c)
+                .unwrap();
+            extract_archive_with_session(&z2, &o, None, None, None, &mut session, Some(&tx), &c)
+                .unwrap();
+            let _ = tx.send_blocking(WorkerEvent::Finished(Ok(OperationSummary::Extracted {
+                password: session.password,
+            })));
+            session.bytes_done
+        });
+
+        let mut pw_prompts = 0usize;
+        let mut conflict_prompts = 0usize;
+        while let Ok(ev) = rx.recv_blocking() {
+            match ev {
+                WorkerEvent::NeedPassword { reply, .. } => {
+                    pw_prompts += 1;
+                    let _ = reply.send_blocking(Some("pw".to_string()));
+                }
+                WorkerEvent::FileConflict { reply, .. } => {
+                    conflict_prompts += 1;
+                    let _ = reply.send_blocking(ConflictResolution::OverwriteAll);
+                }
+                WorkerEvent::Finished(res) => {
+                    res.unwrap();
+                    break;
+                }
+                _ => {}
+            }
+        }
+        let total_bytes = handle.join().unwrap();
+        assert_eq!(pw_prompts, 1);
+        assert_eq!(conflict_prompts, 1);
+        assert_eq!(total_bytes, 15);
+        assert_eq!(fs::read(out_dir.join("shared.txt")).unwrap(), b"second");
+        assert_eq!(fs::read(out_dir.join("other.txt")).unwrap(), b"tail");
     }
 }

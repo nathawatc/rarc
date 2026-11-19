@@ -14,8 +14,9 @@ use gtk::prelude::*;
 use gtk::subclass::prelude::*;
 
 use crate::archive::{
-    add_to_archive, extract_archive, list_archive, spawn_worker, test_archive, ArchiveEntry,
-    ArchiveError, ConflictResolution, EntryKind, OperationSummary, WorkerEvent,
+    add_to_archive, extract_archive_with_session, list_archive, matches_selection, spawn_worker,
+    test_archive, ArchiveEntry, ArchiveError, ConflictResolution, EntryKind, ExtractSession,
+    OperationSummary, WorkerEvent,
 };
 use crate::ui::dialogs::{
     prompt_password_async, run_worker_with_progress, show_create_dialog, show_properties_dialog,
@@ -90,6 +91,8 @@ mod imp {
         pub selected_paths: RefCell<Vec<String>>,
         pub strip_prefix: RefCell<Option<String>>,
         pub password: RefCell<Option<String>>,
+        pub is_raw: Cell<bool>,
+        pub total_bytes: Cell<u64>,
         pub(super) state: RefCell<std::rc::Weak<RefCell<ViewerState>>>,
         pub window: glib::WeakRef<gtk::Window>,
         pub seq: Cell<u64>,
@@ -123,6 +126,8 @@ mod imp {
             let selected = self.selected_paths.borrow().clone();
             let strip_prefix = self.strip_prefix.borrow().clone();
             let password = self.password.borrow().clone();
+            let is_raw = self.is_raw.get();
+            let total_bytes = self.total_bytes.get();
             let state_weak = self.state.borrow().clone();
             let window = self.window.upgrade();
             let seq = self.seq.get().wrapping_add(1);
@@ -148,16 +153,20 @@ mod imp {
                 let archive_for_state = archive_path.clone();
                 let strip_worker = strip_prefix.clone();
                 let rx = spawn_worker(move |tx| {
-                    let (_, pw) = extract_archive(
+                    let mut session = ExtractSession::new(password, total_bytes);
+                    extract_archive_with_session(
                         &archive_path,
                         &stage_worker,
                         Some(&selected_worker),
                         strip_worker.as_deref(),
-                        password.as_deref(),
+                        Some(is_raw),
+                        &mut session,
                         Some(tx),
                         &cancel_worker,
                     )?;
-                    Ok(OperationSummary::Extracted { password: pw })
+                    Ok(OperationSummary::Extracted {
+                        password: session.password,
+                    })
                 });
 
                 while let Ok(ev) = rx.recv().await {
@@ -281,11 +290,14 @@ glib::wrapper! {
 }
 
 impl ArchiveDragProvider {
+    #[allow(clippy::too_many_arguments)]
     fn new(
         archive_path: PathBuf,
         selected_paths: Vec<String>,
         strip_prefix: Option<String>,
         password: Option<String>,
+        is_raw: bool,
+        total_bytes: u64,
         state: std::rc::Weak<RefCell<ViewerState>>,
         window: &gtk::Window,
     ) -> Self {
@@ -295,6 +307,8 @@ impl ArchiveDragProvider {
         *imp.selected_paths.borrow_mut() = selected_paths;
         *imp.strip_prefix.borrow_mut() = strip_prefix;
         *imp.password.borrow_mut() = password;
+        imp.is_raw.set(is_raw);
+        imp.total_bytes.set(total_bytes);
         *imp.state.borrow_mut() = state;
         imp.window.set(Some(window));
         obj
@@ -313,6 +327,7 @@ struct ViewerState {
     current_archive: Option<PathBuf>,
     cached_password: Option<String>,
     format_name: String,
+    is_raw: bool,
     current_dir: String,
     search_query: String,
     stage_seq: u64,
@@ -912,6 +927,7 @@ pub fn launch_standalone(app: &gtk::Application, initial_archive: Option<PathBuf
                             st.current_archive = Some(path_done.clone());
                             st.cached_password = listing.password;
                             st.format_name = listing.format_name;
+                            st.is_raw = listing.is_raw;
                             st.entry_count = entry_count;
                             st.total_uncompressed = total_uncompressed;
                             st.encrypted_count = encrypted_count;
@@ -987,9 +1003,10 @@ pub fn launch_standalone(app: &gtk::Application, initial_archive: Option<PathBuf
     {
         let win_ref = window.clone();
         let state_ref = state.clone();
+        let store_ref = store.clone();
         let selection_ref = selection.clone();
         extract_btn.connect_clicked(move |_| {
-            start_extract_dialog(&win_ref, &state_ref, &selection_ref, false);
+            start_extract_dialog(&win_ref, &state_ref, &store_ref, &selection_ref, false);
         });
     }
 
@@ -998,17 +1015,29 @@ pub fn launch_standalone(app: &gtk::Application, initial_archive: Option<PathBuf
         let win_ref = window.clone();
         let state_ref = state.clone();
         test_btn.connect_clicked(move |_| {
-            let Some(archive_path) = state_ref.borrow().current_archive.clone() else {
+            let (Some(archive_path), cached_pw, total_uncompressed, is_raw) = ({
+                let st = state_ref.borrow();
+                (
+                    st.current_archive.clone(),
+                    st.cached_password.clone(),
+                    st.total_uncompressed,
+                    st.is_raw,
+                )
+            }) else {
                 return;
             };
-            let cached_pw = state_ref.borrow().cached_password.clone();
             let cancel = Arc::new(AtomicBool::new(false));
             let cancel_worker = cancel.clone();
             let arch_worker = archive_path.clone();
 
             let rx = spawn_worker(move |tx| {
-                let (entries_checked, bytes_checked, pw) =
-                    test_archive(&arch_worker, cached_pw.as_deref(), Some(tx), &cancel_worker)?;
+                let (entries_checked, bytes_checked, pw) = test_archive(
+                    &arch_worker,
+                    cached_pw.as_deref(),
+                    Some((total_uncompressed, is_raw)),
+                    Some(tx),
+                    &cancel_worker,
+                )?;
                 Ok(OperationSummary::Tested {
                     entries_checked,
                     bytes_checked,
@@ -1098,17 +1127,19 @@ pub fn launch_standalone(app: &gtk::Application, initial_archive: Option<PathBuf
     {
         let win_ref = window.clone();
         let state_ref = state.clone();
+        let store_ref = store.clone();
         let selection_ref = selection.clone();
         act_extract.connect_activate(move |_, _| {
-            start_extract_dialog(&win_ref, &state_ref, &selection_ref, true);
+            start_extract_dialog(&win_ref, &state_ref, &store_ref, &selection_ref, true);
         });
     }
     {
         let win_ref = window.clone();
         let state_ref = state.clone();
+        let store_ref = store.clone();
         let selection_ref = selection.clone();
         act_copy.connect_activate(move |_, _| {
-            copy_selected_to_clipboard(&win_ref, &state_ref, &selection_ref);
+            copy_selected_to_clipboard(&win_ref, &state_ref, &store_ref, &selection_ref);
         });
     }
     {
@@ -1256,6 +1287,7 @@ pub fn launch_standalone(app: &gtk::Application, initial_archive: Option<PathBuf
             .actions(gdk::DragAction::COPY)
             .build();
         let state_ref = state.clone();
+        let store_ref = store.clone();
         let selection_ref = selection.clone();
         let win_ref = window.clone();
         drag_source.connect_prepare(move |_, _, _| {
@@ -1265,6 +1297,7 @@ pub fn launch_standalone(app: &gtk::Application, initial_archive: Option<PathBuf
             if selected.is_empty() {
                 return None;
             }
+            let total_bytes = compute_selected_bytes(&store_ref, Some(&selected));
             let strip = if st.current_dir.is_empty() {
                 None
             } else {
@@ -1275,6 +1308,8 @@ pub fn launch_standalone(app: &gtk::Application, initial_archive: Option<PathBuf
                 selected,
                 strip,
                 st.cached_password.clone(),
+                st.is_raw,
+                total_bytes,
                 Rc::downgrade(&state_ref),
                 win_ref.upcast_ref(),
             );
@@ -1326,13 +1361,14 @@ fn activate_row(
     always_ask: bool,
     navigate_to: &NavFn,
 ) {
-    let (is_dir, is_symlink, full_path, name, parent_dir) = row.with_data(|d| {
+    let (is_dir, is_symlink, full_path, name, parent_dir, entry_size) = row.with_data(|d| {
         (
             d.is_dir,
             d.symlink_target.is_some() || d.type_label == "Symbolic Link",
             d.full_path.clone(),
             d.name.clone(),
             d.parent_dir.clone(),
+            d.size,
         )
     });
 
@@ -1349,19 +1385,18 @@ fn activate_row(
         return;
     }
 
-    let Some(archive_path) = state.borrow().current_archive.clone() else {
-        return;
-    };
-    let seq = {
+    let (archive_path, seq, cached_pw, is_raw) = {
         let mut st = state.borrow_mut();
+        let Some(arch) = st.current_archive.clone() else {
+            return;
+        };
         st.stage_seq += 1;
-        st.stage_seq
+        (arch, st.stage_seq, st.cached_password.clone(), st.is_raw)
     };
     let Ok(temp_root) = session_temp_dir() else {
         return;
     };
     let preview_dir = temp_root.join(format!("preview-{seq}"));
-    let cached_pw = state.borrow().cached_password.clone();
     let cancel = Arc::new(AtomicBool::new(false));
     let cancel_worker = cancel.clone();
     let target_file = preview_dir.join(&name);
@@ -1372,16 +1407,20 @@ fn activate_row(
     };
 
     let rx = spawn_worker(move |tx| {
-        let (_, pw) = extract_archive(
+        let mut session = ExtractSession::new(cached_pw, entry_size);
+        extract_archive_with_session(
             &archive_path,
             &preview_dir,
             Some(&[full_path]),
             strip.as_deref(),
-            cached_pw.as_deref(),
+            Some(is_raw),
+            &mut session,
             Some(tx),
             &cancel_worker,
         )?;
-        Ok(OperationSummary::Extracted { password: pw })
+        Ok(OperationSummary::Extracted {
+            password: session.password,
+        })
     });
 
     let win_launch = window.clone();
@@ -1432,6 +1471,7 @@ fn is_user_dismissed_error(err: &glib::Error) -> bool {
 fn start_extract_dialog(
     window: &gtk::ApplicationWindow,
     state: &Rc<RefCell<ViewerState>>,
+    store: &gio::ListStore,
     selection: &gtk::MultiSelection,
     require_selection: bool,
 ) {
@@ -1447,14 +1487,19 @@ fn start_extract_dialog(
     } else {
         Some(selected)
     };
-    let (strip_prefix, cached_pw) = {
+    let (strip_prefix, cached_pw, is_raw, total_bytes) = {
         let st = state.borrow();
         let strip = if selected_opt.is_some() && !st.current_dir.is_empty() {
             Some(st.current_dir.clone())
         } else {
             None
         };
-        (strip, st.cached_password.clone())
+        let bytes = if selected_opt.is_some() {
+            compute_selected_bytes(store, selected_opt.as_deref())
+        } else {
+            st.total_uncompressed
+        };
+        (strip, st.cached_password.clone(), st.is_raw, bytes)
     };
 
     let initial_folder = archive_path
@@ -1478,16 +1523,20 @@ fn start_extract_dialog(
         let arch_worker = archive_path.clone();
         let dest_worker = dest_dir.clone();
         let rx = spawn_worker(move |tx| {
-            let (_, pw) = extract_archive(
+            let mut session = ExtractSession::new(cached_pw, total_bytes);
+            extract_archive_with_session(
                 &arch_worker,
                 &dest_worker,
                 selected_opt.as_deref(),
                 strip_prefix.as_deref(),
-                cached_pw.as_deref(),
+                Some(is_raw),
+                &mut session,
                 Some(tx),
                 &cancel_worker,
             )?;
-            Ok(OperationSummary::Extracted { password: pw })
+            Ok(OperationSummary::Extracted {
+                password: session.password,
+            })
         });
 
         let win_err = win_extract.clone();
@@ -1515,6 +1564,7 @@ fn start_extract_dialog(
 fn copy_selected_to_clipboard(
     window: &gtk::ApplicationWindow,
     state: &Rc<RefCell<ViewerState>>,
+    store: &gio::ListStore,
     selection: &gtk::MultiSelection,
 ) {
     let Some(archive_path) = state.borrow().current_archive.clone() else {
@@ -1525,7 +1575,7 @@ fn copy_selected_to_clipboard(
         return;
     }
 
-    let (seq, strip_prefix, cached_pw) = {
+    let (seq, strip_prefix, cached_pw, is_raw, total_bytes) = {
         let mut st = state.borrow_mut();
         st.stage_seq += 1;
         let strip = if st.current_dir.is_empty() {
@@ -1533,7 +1583,14 @@ fn copy_selected_to_clipboard(
         } else {
             Some(st.current_dir.clone())
         };
-        (st.stage_seq, strip, st.cached_password.clone())
+        let bytes = compute_selected_bytes(store, Some(&selected));
+        (
+            st.stage_seq,
+            strip,
+            st.cached_password.clone(),
+            st.is_raw,
+            bytes,
+        )
     };
     let Ok(temp_root) = session_temp_dir() else {
         return;
@@ -1546,16 +1603,20 @@ fn copy_selected_to_clipboard(
     let cancel_worker = cancel.clone();
 
     let rx = spawn_worker(move |tx| {
-        let (_, pw) = extract_archive(
+        let mut session = ExtractSession::new(cached_pw, total_bytes);
+        extract_archive_with_session(
             &archive_path,
             &stage_worker,
             Some(&selected_worker),
             strip_worker.as_deref(),
-            cached_pw.as_deref(),
+            Some(is_raw),
+            &mut session,
             Some(tx),
             &cancel_worker,
         )?;
-        Ok(OperationSummary::Extracted { password: pw })
+        Ok(OperationSummary::Extracted {
+            password: session.password,
+        })
     });
 
     let win_done = window.clone();
@@ -1796,6 +1857,22 @@ fn collect_selected_paths(selection: &gtk::MultiSelection) -> Vec<String> {
         .into_iter()
         .map(|row| row.with_data(|d| d.full_path.clone()))
         .collect()
+}
+
+fn compute_selected_bytes(store: &gio::ListStore, selected_prefixes: Option<&[String]>) -> u64 {
+    let mut total = 0u64;
+    for idx in 0..store.n_items() {
+        if let Some(obj) = store.item(idx)
+            && let Some(row) = obj.downcast_ref::<ArchiveRowObject>()
+        {
+            row.with_data(|d| {
+                if !d.is_dir && matches_selection(&d.full_path, selected_prefixes) {
+                    total += d.size;
+                }
+            });
+        }
+    }
+    total
 }
 
 fn build_row_objects(entries: &[ArchiveEntry]) -> Vec<ArchiveRowObject> {

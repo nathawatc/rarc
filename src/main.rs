@@ -13,8 +13,8 @@ use gtk::gio;
 use gtk::prelude::*;
 
 use crate::archive::{
-    extract_archive, list_archive, resolve_extract_here_dir, spawn_worker, ArchiveError,
-    OperationSummary,
+    extract_archive_with_session, list_archive, resolve_extract_here_dir, spawn_worker,
+    ArchiveError, ExtractSession, OperationSummary,
 };
 use crate::ui::dialogs::{run_worker_with_progress, show_create_dialog};
 use crate::ui::show_error_dialog;
@@ -140,21 +140,36 @@ fn run_tap_mode(app: &gtk::Application, action: TapAction, paths: Vec<PathBuf>) 
             let cancel = Arc::new(AtomicBool::new(false));
             let cancel_worker = cancel.clone();
             let rx = spawn_worker(move |tx| {
+                let mut jobs = Vec::with_capacity(paths.len());
+                let mut shared_pw: Option<String> = None;
+                let mut total_bytes = 0u64;
                 for archive in paths {
                     let abs_archive = absolutize_path(&archive);
-                    let listing = list_archive(&abs_archive, None, Some(tx), &cancel_worker)?;
+                    let listing =
+                        list_archive(&abs_archive, shared_pw.as_deref(), Some(tx), &cancel_worker)?;
+                    if let Some(pw) = listing.password {
+                        shared_pw = Some(pw);
+                    }
+                    total_bytes += listing.entries.iter().map(|e| e.size).sum::<u64>();
                     let dest_dir = resolve_extract_here_dir(&listing.entries, &abs_archive);
-                    extract_archive(
+                    jobs.push((abs_archive, dest_dir, listing.is_raw));
+                }
+                let mut session = ExtractSession::new(shared_pw, total_bytes);
+                for (abs_archive, dest_dir, is_raw) in jobs {
+                    extract_archive_with_session(
                         &abs_archive,
                         &dest_dir,
                         None,
                         None,
-                        listing.password.as_deref(),
+                        Some(is_raw),
+                        &mut session,
                         Some(tx),
                         &cancel_worker,
                     )?;
                 }
-                Ok(OperationSummary::Extracted { password: None })
+                Ok(OperationSummary::Extracted {
+                    password: session.password,
+                })
             });
 
             run_worker_with_progress(Some(app), None, "Extracting Here", rx, cancel, |res| {
@@ -192,19 +207,23 @@ fn run_tap_mode(app: &gtk::Application, action: TapAction, paths: Vec<PathBuf>) 
                 let cancel_worker = cancel.clone();
                 let dest_worker = dest_dir.clone();
                 let rx = spawn_worker(move |tx| {
+                    let mut session = ExtractSession::new(None, 0);
                     for archive in paths {
                         let abs_archive = absolutize_path(&archive);
-                        extract_archive(
+                        extract_archive_with_session(
                             &abs_archive,
                             &dest_worker,
                             None,
                             None,
                             None,
+                            &mut session,
                             Some(tx),
                             &cancel_worker,
                         )?;
                     }
-                    Ok(OperationSummary::Extracted { password: None })
+                    Ok(OperationSummary::Extracted {
+                        password: session.password,
+                    })
                 });
 
                 run_worker_with_progress(
