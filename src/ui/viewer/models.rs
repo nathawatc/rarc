@@ -1,6 +1,6 @@
 use std::cell::RefCell;
 use std::cmp::Ordering;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::rc::Rc;
@@ -455,52 +455,71 @@ pub(super) fn index_archive_entries(raw_entries: Vec<ArchiveEntry>) -> ArchiveIn
     let mut entries: Vec<Rc<ArchiveEntry>> = Vec::with_capacity(raw_entries.len());
     let mut dir_entries: HashMap<String, Vec<usize>> = HashMap::new();
     let mut dir_children: HashMap<String, Vec<String>> = HashMap::new();
-    let mut seen_paths: HashSet<String> = HashSet::with_capacity(raw_entries.len());
-    let mut seen_dirs: HashSet<String> = HashSet::new();
-    let mut queued_dirs: HashSet<String> = HashSet::new();
+    // Tracks every directory path seen (explicit or implicit ancestor);
+    // value is `true` when an explicit Directory entry already exists in `entries`.
+    let mut seen_dirs: HashMap<String, bool> = HashMap::new();
+    let mut missing_lens: Vec<usize> = Vec::new();
 
     for entry in raw_entries {
         let idx = entries.len();
-        let parent_dir = path_parent(&entry.path).to_string();
         let is_dir = entry.kind == EntryKind::Directory;
-        seen_paths.insert(entry.path.clone());
+        let parent_dir = path_parent(&entry.path);
+
+        if let Some(list) = dir_entries.get_mut(parent_dir) {
+            list.push(idx);
+        } else {
+            dir_entries.insert(parent_dir.to_string(), vec![idx]);
+        }
+
+        if is_dir
+            && let Some(has_explicit) = seen_dirs.get_mut(entry.path.as_str())
+        {
+            *has_explicit = true;
+        }
 
         let ancestor_dir = if is_dir {
             Some(entry.path.as_str())
         } else if !parent_dir.is_empty() {
-            Some(parent_dir.as_str())
+            Some(parent_dir)
         } else {
             None
         };
-        if let Some(full_dir) = ancestor_dir {
-            let mut acc = String::new();
-            for part in full_dir.split('/') {
-                let parent = acc.clone();
-                if !acc.is_empty() {
-                    acc.push('/');
+
+        if let Some(full_dir) = ancestor_dir
+            && !seen_dirs.contains_key(full_dir)
+        {
+            missing_lens.clear();
+            let mut cur = full_dir;
+            while !cur.is_empty() && !seen_dirs.contains_key(cur) {
+                missing_lens.push(cur.len());
+                cur = path_parent(cur);
+            }
+            for &len in missing_lens.iter().rev() {
+                let dir = &full_dir[..len];
+                let p = path_parent(dir);
+                let dir_owned = dir.to_string();
+                if let Some(children) = dir_children.get_mut(p) {
+                    children.push(dir_owned.clone());
+                } else {
+                    dir_children.insert(p.to_string(), vec![dir_owned.clone()]);
                 }
-                acc.push_str(part);
-                if seen_dirs.insert(acc.clone()) {
-                    dir_children.entry(parent).or_default().push(acc.clone());
-                }
-                if (!is_dir || acc != entry.path)
-                    && !seen_paths.contains(&acc)
-                    && !queued_dirs.contains(&acc)
-                {
-                    queued_dirs.insert(acc.clone());
-                }
+                let explicit = is_dir && dir == entry.path;
+                seen_dirs.insert(dir_owned, explicit);
             }
         }
 
-        dir_entries.entry(parent_dir).or_default().push(idx);
         entries.push(Rc::new(entry));
     }
 
-    for dir_path in queued_dirs {
-        if seen_paths.insert(dir_path.clone()) {
+    for (dir_path, has_explicit) in seen_dirs {
+        if !has_explicit {
             let idx = entries.len();
-            let parent_dir = path_parent(&dir_path).to_string();
-            dir_entries.entry(parent_dir).or_default().push(idx);
+            let parent_dir = path_parent(&dir_path);
+            if let Some(list) = dir_entries.get_mut(parent_dir) {
+                list.push(idx);
+            } else {
+                dir_entries.insert(parent_dir.to_string(), vec![idx]);
+            }
             entries.push(Rc::new(ArchiveEntry {
                 path: dir_path,
                 size: 0,
