@@ -15,6 +15,7 @@ use gtk::prelude::*;
 use crate::archive::{
     sanitize_single_filename, ArchiveError, ConflictResolution, OperationSummary, WorkerEvent,
 };
+use crate::i18n::tr;
 
 pub use create::show_create_dialog;
 pub use properties::{show_properties_dialog, ArchivePropertiesInfo};
@@ -50,7 +51,7 @@ pub fn run_worker_with_progress<F>(
     heading.set_xalign(0.0);
     heading.add_css_class("title-4");
 
-    let file_label = gtk::Label::new(Some("Preparing…"));
+    let file_label = gtk::Label::new(Some(&tr("Preparing…")));
     file_label.set_xalign(0.0);
     file_label.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
     file_label.add_css_class("rarc-progress-file");
@@ -59,7 +60,7 @@ pub fn run_worker_with_progress<F>(
     progress.set_show_text(true);
     progress.set_hexpand(true);
 
-    let cancel_btn = gtk::Button::with_label("Cancel");
+    let cancel_btn = gtk::Button::with_label(&tr("Cancel"));
     cancel_btn.set_halign(gtk::Align::End);
 
     {
@@ -68,7 +69,7 @@ pub fn run_worker_with_progress<F>(
         cancel_btn.connect_clicked(move |btn| {
             cancel_flag.store(true, Ordering::Relaxed);
             btn.set_sensitive(false);
-            label.set_text("Cancelling…");
+            label.set_text(&tr("Cancelling…"));
         });
     }
 
@@ -79,7 +80,7 @@ pub fn run_worker_with_progress<F>(
         win.connect_close_request(move |_| {
             cancel_flag.store(true, Ordering::Relaxed);
             btn.set_sensitive(false);
-            label.set_text("Cancelling…");
+            label.set_text(&tr("Cancelling…"));
             glib::Propagation::Stop
         });
     }
@@ -187,8 +188,9 @@ pub async fn prompt_password_async(
     archive_name: &str,
     retry: bool,
 ) -> Option<String> {
-    let msg_text = format!("Enter the passphrase for \"{archive_name}\":");
-    run_modal_prompt(parent, "Password Required", 10, |win, vbox, send_once| {
+    let msg_text =
+        tr("Enter the passphrase for \"{archive}\":").replace("{archive}", archive_name);
+    run_modal_prompt(parent, &tr("Password Required"), 10, |win, vbox, send_once| {
         let msg = gtk::Label::new(Some(&msg_text));
         msg.set_xalign(0.0);
         msg.set_wrap(true);
@@ -198,7 +200,7 @@ pub async fn prompt_password_async(
         vbox.append(&msg);
 
         if retry {
-            let warn = gtk::Label::new(Some("Incorrect passphrase. Please try again."));
+            let warn = gtk::Label::new(Some(&tr("Incorrect passphrase. Please try again.")));
             warn.set_xalign(0.0);
             warn.add_css_class("error");
             warn.add_css_class("rarc-hint");
@@ -213,8 +215,8 @@ pub async fn prompt_password_async(
 
         let btn_box = gtk::Box::new(gtk::Orientation::Horizontal, 8);
         btn_box.set_halign(gtk::Align::End);
-        let cancel_btn = gtk::Button::with_label("Cancel");
-        let ok_btn = gtk::Button::with_label("Unlock");
+        let cancel_btn = gtk::Button::with_label(&tr("Cancel"));
+        let ok_btn = gtk::Button::with_label(&tr("Unlock"));
         ok_btn.add_css_class("suggested-action");
         btn_box.append(&cancel_btn);
         btn_box.append(&ok_btn);
@@ -246,8 +248,10 @@ async fn prompt_conflict_async(
         .to_string();
     let suggested = suggest_renamed_filename(&orig_name);
 
-    run_modal_prompt(parent, "File Already Exists", 12, |win, vbox, send_once| {
-        let msg = gtk::Label::new(Some(&format!("A file already exists at:\n{display_path}")));
+    run_modal_prompt(parent, &tr("File Already Exists"), 12, |win, vbox, send_once| {
+        let msg = gtk::Label::new(Some(
+            &tr("A file already exists at:\n{path}").replace("{path}", &display_path),
+        ));
         msg.set_xalign(0.0);
         msg.set_wrap(true);
         msg.set_wrap_mode(gtk::pango::WrapMode::WordChar);
@@ -257,12 +261,12 @@ async fn prompt_conflict_async(
         vbox.append(&msg);
 
         let rename_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-        let rename_lbl = gtk::Label::new(Some("Rename to:"));
+        let rename_lbl = gtk::Label::new(Some(&tr("Rename to:")));
         let rename_entry = gtk::Entry::builder()
             .text(&suggested)
             .hexpand(true)
             .build();
-        let rename_btn = gtk::Button::with_label("Rename");
+        let rename_btn = gtk::Button::with_label(&tr("Rename"));
         rename_row.append(&rename_lbl);
         rename_row.append(&rename_entry);
         rename_row.append(&rename_btn);
@@ -270,10 +274,10 @@ async fn prompt_conflict_async(
 
         let actions = gtk::Box::new(gtk::Orientation::Horizontal, 8);
         actions.set_halign(gtk::Align::End);
-        let skip_all_btn = gtk::Button::with_label("Skip All");
-        let skip_btn = gtk::Button::with_label("Skip");
-        let overwrite_all_btn = gtk::Button::with_label("Overwrite All");
-        let overwrite_btn = gtk::Button::with_label("Overwrite");
+        let skip_all_btn = gtk::Button::with_label(&tr("Skip All"));
+        let skip_btn = gtk::Button::with_label(&tr("Skip"));
+        let overwrite_all_btn = gtk::Button::with_label(&tr("Overwrite All"));
+        let overwrite_btn = gtk::Button::with_label(&tr("Overwrite"));
         overwrite_btn.add_css_class("suggested-action");
 
         actions.append(&skip_all_btn);

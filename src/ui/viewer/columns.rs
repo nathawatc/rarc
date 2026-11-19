@@ -7,7 +7,8 @@ use gtk::gio;
 use gtk::prelude::*;
 
 use crate::archive::{ArchiveEntry, EntryKind};
-use crate::ui::{format_mtime, format_size};
+use crate::i18n::tr;
+use crate::ui::{format_mtime, format_size, translate_entry_kind};
 
 use super::models::{cmp_ascii_ignore_case, path_basename, ArchiveRowObject};
 
@@ -19,17 +20,17 @@ pub(super) fn build_context_menu_model() -> gio::Menu {
     let menu = gio::Menu::new();
 
     let s1 = gio::Menu::new();
-    s1.append(Some("Open"), Some("item.open"));
-    s1.append(Some("Open With…"), Some("item.open-with"));
+    s1.append(Some(&tr("Open")), Some("item.open"));
+    s1.append(Some(&tr("Open With…")), Some("item.open-with"));
     menu.append_section(None, &s1);
 
     let s2 = gio::Menu::new();
-    s2.append(Some("Extract Selected…"), Some("item.extract"));
-    s2.append(Some("Copy"), Some("item.copy"));
+    s2.append(Some(&tr("Extract Selected…")), Some("item.extract"));
+    s2.append(Some(&tr("Copy")), Some("item.copy"));
     menu.append_section(None, &s2);
 
     let s3 = gio::Menu::new();
-    s3.append(Some("Properties"), Some("item.properties"));
+    s3.append(Some(&tr("Properties")), Some("item.properties"));
     menu.append_section(None, &s3);
 
     menu
@@ -103,7 +104,7 @@ pub(super) fn append_columns(view: &gtk::ColumnView) {
             lock.set_visible(is_encrypted);
         } else if is_encrypted {
             let lock = gtk::Image::from_icon_name("channel-secure-symbolic");
-            lock.set_tooltip_text(Some("Encrypted"));
+            lock.set_tooltip_text(Some(&tr("Encrypted")));
             hbox.append(&lock);
         }
     });
@@ -120,7 +121,7 @@ pub(super) fn append_columns(view: &gtk::ColumnView) {
             .into()
     });
     let name_col = gtk::ColumnViewColumn::builder()
-        .title("Name")
+        .title(tr("Name"))
         .factory(&name_factory)
         .sorter(&name_sorter)
         .expand(true)
@@ -131,7 +132,7 @@ pub(super) fn append_columns(view: &gtk::ColumnView) {
 
     // Uncompressed Size
     let size_col = make_text_column(
-        "Uncompressed Size",
+        &tr("Uncompressed Size"),
         1.0,
         true,
         130,
@@ -148,11 +149,11 @@ pub(super) fn append_columns(view: &gtk::ColumnView) {
 
     // Type
     let type_col = make_text_column(
-        "Type",
+        &tr("Type"),
         0.0,
         false,
         120,
-        |e| e.kind.label_cow(path_basename(&e.path)),
+        |e| Cow::Owned(translate_entry_kind(e.kind, path_basename(&e.path))),
         |ea, eb| {
             ea.kind
                 .label_cow(path_basename(&ea.path))
@@ -163,7 +164,7 @@ pub(super) fn append_columns(view: &gtk::ColumnView) {
 
     // Modified Date
     let mtime_col = make_text_column(
-        "Modified Date",
+        &tr("Modified Date"),
         0.0,
         true,
         150,

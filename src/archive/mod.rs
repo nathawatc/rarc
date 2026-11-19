@@ -44,16 +44,6 @@ impl ArchiveFormat {
         }
     }
 
-    pub fn label(self) -> &'static str {
-        match self {
-            ArchiveFormat::TarZst => "Tar + Zstandard (.tar.zst)",
-            ArchiveFormat::Zip => "ZIP Archive (.zip)",
-            ArchiveFormat::SevenZ => "7-Zip Archive (.7z)",
-            ArchiveFormat::TarXz => "Tar + XZ (.tar.xz)",
-            ArchiveFormat::TarGz => "Tar + Gzip (.tar.gz)",
-        }
-    }
-
     pub fn supports_write_encryption(self) -> bool {
         matches!(self, ArchiveFormat::Zip)
     }
@@ -79,10 +69,6 @@ impl EntryKind {
                 _ => Cow::Borrowed("File"),
             },
         }
-    }
-
-    pub fn label(self, name: &str) -> String {
-        self.label_cow(name).into_owned()
     }
 }
 

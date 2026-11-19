@@ -11,6 +11,9 @@ use gtk4 as gtk;
 use gtk::{gdk, gio};
 use gtk::prelude::*;
 
+use crate::archive::EntryKind;
+use crate::i18n::tr;
+
 static TEMP_ROOT: OnceLock<Mutex<Option<PathBuf>>> = OnceLock::new();
 
 pub fn load_css() {
@@ -51,6 +54,20 @@ pub fn cleanup_session_temp_dir() {
         && let Some(dir) = cell.lock().unwrap().take()
     {
         let _ = fs::remove_dir_all(dir);
+    }
+}
+
+pub fn translate_entry_kind(kind: EntryKind, name: &str) -> String {
+    match kind {
+        EntryKind::Directory => tr("Folder"),
+        EntryKind::Symlink => tr("Symbolic Link"),
+        EntryKind::Other => tr("Special"),
+        EntryKind::File => match Path::new(name).extension().and_then(|e| e.to_str()) {
+            Some(ext) if !ext.is_empty() => {
+                tr("{ext} File").replace("{ext}", &ext.to_ascii_uppercase())
+            }
+            _ => tr("File"),
+        },
     }
 }
 
@@ -122,7 +139,7 @@ pub fn show_message_dialog(parent: Option<&impl IsA<gtk::Window>>, title: &str, 
     body.set_max_width_chars(44);
     body.set_selectable(true);
 
-    let ok_btn = gtk::Button::with_label("Close");
+    let ok_btn = gtk::Button::with_label(&tr("Close"));
     ok_btn.set_halign(gtk::Align::End);
     ok_btn.add_css_class("suggested-action");
     let win_ref = win.clone();

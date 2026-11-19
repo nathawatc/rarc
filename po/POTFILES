@@ -1,0 +1,8 @@
+src/main.rs
+src/ui/mod.rs
+src/ui/dialogs/mod.rs
+src/ui/dialogs/create.rs
+src/ui/dialogs/properties.rs
+src/ui/viewer/mod.rs
+src/ui/viewer/columns.rs
+src/ui/viewer/actions.rs

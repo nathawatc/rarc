@@ -12,6 +12,7 @@ use gtk::prelude::*;
 use crate::archive::{
     create_archive, sanitize_single_filename, ArchiveError, ArchiveFormat, OperationSummary,
 };
+use crate::i18n::{tr, trn};
 use crate::ui::{select_folder_dialog, show_message_dialog};
 
 use super::run_worker_with_progress;
@@ -27,7 +28,7 @@ pub fn show_create_dialog<F>(
     F: Fn(Option<PathBuf>) + 'static,
 {
     let win = gtk::Window::builder()
-        .title("Create Archive")
+        .title(tr("Create Archive"))
         .modal(parent.is_some())
         .resizable(false)
         .default_width(460)
@@ -67,7 +68,7 @@ pub fn show_create_dialog<F>(
         .column_spacing(12)
         .build();
 
-    let name_lbl = gtk::Label::new(Some("Archive Name"));
+    let name_lbl = gtk::Label::new(Some(&tr("Archive Name")));
     name_lbl.set_xalign(1.0);
     let name_entry = gtk::Entry::builder()
         .text(&default_stem)
@@ -75,13 +76,14 @@ pub fn show_create_dialog<F>(
         .activates_default(true)
         .build();
 
-    let fmt_lbl = gtk::Label::new(Some("Format"));
+    let fmt_lbl = gtk::Label::new(Some(&tr("Format")));
     fmt_lbl.set_xalign(1.0);
-    let fmt_labels: Vec<&str> = ArchiveFormat::ALL.iter().map(|f| f.label()).collect();
-    let fmt_dropdown = gtk::DropDown::from_strings(&fmt_labels);
+    let fmt_labels: Vec<String> = ArchiveFormat::ALL.iter().copied().map(format_label).collect();
+    let fmt_label_refs: Vec<&str> = fmt_labels.iter().map(String::as_str).collect();
+    let fmt_dropdown = gtk::DropDown::from_strings(&fmt_label_refs);
     fmt_dropdown.set_hexpand(true);
 
-    let dir_lbl = gtk::Label::new(Some("Location"));
+    let dir_lbl = gtk::Label::new(Some(&tr("Location")));
     dir_lbl.set_xalign(1.0);
     let dir_box = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     let dir_display = gtk::Entry::builder()
@@ -89,11 +91,11 @@ pub fn show_create_dialog<F>(
         .editable(false)
         .hexpand(true)
         .build();
-    let dir_btn = gtk::Button::with_label("Choose…");
+    let dir_btn = gtk::Button::with_label(&tr("Choose…"));
     dir_box.append(&dir_display);
     dir_box.append(&dir_btn);
 
-    let pass_lbl = gtk::Label::new(Some("Password"));
+    let pass_lbl = gtk::Label::new(Some(&tr("Password")));
     pass_lbl.set_xalign(1.0);
     let pass_box = gtk::Box::new(gtk::Orientation::Vertical, 4);
     let pass_entry = gtk::PasswordEntry::builder()
@@ -101,21 +103,21 @@ pub fn show_create_dialog<F>(
         .hexpand(true)
         .sensitive(false)
         .build();
-    let pass_hint = gtk::Label::new(Some("Encryption is only supported for .zip archives"));
+    let pass_hint = gtk::Label::new(Some(&tr("Encryption is only supported for .zip archives")));
     pass_hint.set_xalign(0.0);
     pass_hint.add_css_class("rarc-hint");
     pass_box.append(&pass_entry);
     pass_box.append(&pass_hint);
 
-    let files_lbl = gtk::Label::new(Some("Inputs"));
+    let files_lbl = gtk::Label::new(Some(&tr("Inputs")));
     files_lbl.set_xalign(1.0);
     let files_box = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     let files_summary = gtk::Label::new(Some(&summarize_inputs(&inputs_rc.borrow())));
     files_summary.set_xalign(0.0);
     files_summary.set_hexpand(true);
     files_summary.set_ellipsize(gtk::pango::EllipsizeMode::End);
-    let add_files_btn = gtk::Button::with_label("Add Files…");
-    let add_folder_btn = gtk::Button::with_label("Add Folder…");
+    let add_files_btn = gtk::Button::with_label(&tr("Add Files…"));
+    let add_folder_btn = gtk::Button::with_label(&tr("Add Folder…"));
     files_box.append(&files_summary);
     files_box.append(&add_files_btn);
     files_box.append(&add_folder_btn);
@@ -134,8 +136,8 @@ pub fn show_create_dialog<F>(
 
     let btn_box = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     btn_box.set_halign(gtk::Align::End);
-    let cancel_btn = gtk::Button::with_label("Cancel");
-    let create_btn = gtk::Button::with_label("Create");
+    let cancel_btn = gtk::Button::with_label(&tr("Cancel"));
+    let create_btn = gtk::Button::with_label(&tr("Create"));
     create_btn.add_css_class("suggested-action");
     create_btn.set_sensitive(!inputs_rc.borrow().is_empty());
     btn_box.append(&cancel_btn);
@@ -158,9 +160,9 @@ pub fn show_create_dialog<F>(
             pass_entry_ref.set_sensitive(enc_ok);
             if !enc_ok {
                 pass_entry_ref.set_text("");
-                pass_hint_ref.set_text("Encryption is only supported for .zip archives");
+                pass_hint_ref.set_text(&tr("Encryption is only supported for .zip archives"));
             } else {
-                pass_hint_ref.set_text("Optional AES-256 passphrase for .zip");
+                pass_hint_ref.set_text(&tr("Optional AES-256 passphrase for .zip"));
             }
         });
     }
@@ -175,7 +177,7 @@ pub fn show_create_dialog<F>(
             let initial = dest_rc.borrow().clone();
             select_folder_dialog(
                 Some(&win_ref),
-                "Select Destination Folder",
+                &tr("Select Destination Folder"),
                 Some(&initial),
                 move |path_opt| {
                     if let Some(path) = path_opt {
@@ -193,7 +195,9 @@ pub fn show_create_dialog<F>(
         let summary_ref = files_summary.clone();
         let create_ref = create_btn.clone();
         add_files_btn.connect_clicked(move |_| {
-            let dialog = gtk::FileDialog::builder().title("Select Files to Add").build();
+            let dialog = gtk::FileDialog::builder()
+                .title(tr("Select Files to Add"))
+                .build();
             let inputs_ref = inputs_ref.clone();
             let summary_ref = summary_ref.clone();
             let create_ref = create_ref.clone();
@@ -225,7 +229,11 @@ pub fn show_create_dialog<F>(
             let inputs_ref = inputs_ref.clone();
             let summary_ref = summary_ref.clone();
             let create_ref = create_ref.clone();
-            select_folder_dialog(Some(&win_ref), "Select Folder to Add", None, move |path_opt| {
+            select_folder_dialog(
+                Some(&win_ref),
+                &tr("Select Folder to Add"),
+                None,
+                move |path_opt| {
                 if let Some(path) = path_opt {
                     let mut guard = inputs_ref.borrow_mut();
                     if !guard.contains(&path) {
@@ -267,8 +275,8 @@ pub fn show_create_dialog<F>(
             let Ok(raw_name) = sanitize_single_filename(&name_entry.text()) else {
                 show_message_dialog(
                     Some(&win_ref),
-                    "Invalid Archive Name",
-                    "Please enter a valid filename without path separators.",
+                    &tr("Invalid Archive Name"),
+                    &tr("Please enter a valid filename without path separators."),
                 );
                 return;
             };
@@ -320,12 +328,12 @@ pub fn show_create_dialog<F>(
                     run_worker_with_progress(
                         app_cloned.as_ref(),
                         parent_cloned.as_ref(),
-                        &format!(
-                            "Creating {}",
+                        &tr("Creating {name}").replace(
+                            "{name}",
                             output_path
                                 .file_name()
                                 .and_then(|s| s.to_str())
-                                .unwrap_or("archive")
+                                .unwrap_or("archive"),
                         ),
                         rx,
                         cancel,
@@ -337,7 +345,7 @@ pub fn show_create_dialog<F>(
                             Err(err) => {
                                 show_message_dialog(
                                     parent_err.as_ref(),
-                                    "Failed to Create Archive",
+                                    &tr("Failed to Create Archive"),
                                     &err.to_string(),
                                 );
                                 cb_done(None);
@@ -352,13 +360,16 @@ pub fn show_create_dialog<F>(
                     .file_name()
                     .and_then(|s| s.to_str())
                     .unwrap_or("archive");
+                let cancel_label = tr("Cancel");
+                let replace_label = tr("Replace");
                 let confirm = gtk::AlertDialog::builder()
                     .modal(true)
-                    .message("Replace Existing Archive?")
-                    .detail(format!(
-                        "A file named \"{name}\" already exists. Do you want to overwrite it?"
-                    ))
-                    .buttons(["Cancel", "Replace"])
+                    .message(tr("Replace Existing Archive?"))
+                    .detail(
+                        tr("A file named \"{name}\" already exists. Do you want to overwrite it?")
+                            .replace("{name}", name),
+                    )
+                    .buttons([cancel_label.as_str(), replace_label.as_str()])
                     .cancel_button(0)
                     .default_button(0)
                     .build();
@@ -388,15 +399,25 @@ fn resolve_initial_dest_dir(inputs: &[PathBuf], fallback: Option<&Path>) -> Path
     std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
 }
 
+fn format_label(fmt: ArchiveFormat) -> String {
+    match fmt {
+        ArchiveFormat::TarZst => tr("Tar + Zstandard (.tar.zst)"),
+        ArchiveFormat::Zip => tr("ZIP Archive (.zip)"),
+        ArchiveFormat::SevenZ => tr("7-Zip Archive (.7z)"),
+        ArchiveFormat::TarXz => tr("Tar + XZ (.tar.xz)"),
+        ArchiveFormat::TarGz => tr("Tar + Gzip (.tar.gz)"),
+    }
+}
+
 fn summarize_inputs(inputs: &[PathBuf]) -> String {
     match inputs.len() {
-        0 => "No files selected".to_string(),
+        0 => tr("No files selected"),
         1 => inputs[0]
             .file_name()
             .and_then(|s| s.to_str())
-            .unwrap_or("1 item")
-            .to_string(),
-        n => format!("{n} items selected"),
+            .map(ToOwned::to_owned)
+            .unwrap_or_else(|| tr("1 item")),
+        n => trn("{n} item selected", "{n} items selected", n as u64).replace("{n}", &n.to_string()),
     }
 }
 

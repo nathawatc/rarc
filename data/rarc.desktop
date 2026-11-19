@@ -2,7 +2,9 @@
 Type=Application
 Name=rarc
 GenericName=Archive Manager
+GenericName[th]=โปรแกรมจัดการแฟ้มจัดเก็บ
 Comment=Lightweight GTK4 archive manager powered by libarchive
+Comment[th]=โปรแกรมจัดการแฟ้มจัดเก็บ GTK4 น้ำหนักเบา ขับเคลื่อนด้วย libarchive
 Icon=package-x-generic
 Exec=rarc -- %f
 StartupNotify=true

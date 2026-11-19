@@ -17,6 +17,7 @@ use gtk::prelude::*;
 use crate::archive::{
     list_archive, spawn_worker, test_archive, ArchiveError, OperationSummary, WorkerEvent,
 };
+use crate::i18n::{tr, trn};
 use crate::ui::dialogs::{run_worker_with_progress, show_create_dialog, show_properties_dialog};
 use crate::ui::{format_size, show_message_dialog};
 
@@ -66,9 +67,9 @@ pub fn launch_standalone(app: &gtk::Application, initial_archive: Option<PathBuf
     // HeaderBar controls
     let header = gtk::HeaderBar::new();
     let open_btn = gtk::Button::builder()
-        .label("Open")
+        .label(tr("Open"))
         .icon_name("document-open-symbolic")
-        .tooltip_text("Open an archive")
+        .tooltip_text(tr("Open an archive"))
         .build();
     let new_btn = make_themed_icon_button(
         &[
@@ -76,7 +77,7 @@ pub fn launch_standalone(app: &gtk::Application, initial_archive: Option<PathBuf
             "package-x-generic-symbolic",
             "document-new-symbolic",
         ],
-        "Create a new archive",
+        &tr("Create a new archive"),
     );
     let extract_btn = make_themed_icon_button(
         &[
@@ -84,24 +85,24 @@ pub fn launch_standalone(app: &gtk::Application, initial_archive: Option<PathBuf
             "archive-extract-symbolic",
             "folder-download-symbolic",
         ],
-        "Extract selected entries or entire archive",
+        &tr("Extract selected entries or entire archive"),
     );
     extract_btn.set_sensitive(false);
     let test_btn = gtk::Button::builder()
-        .label("Test")
+        .label(tr("Test"))
         .icon_name("security-high-symbolic")
-        .tooltip_text("Test archive integrity")
+        .tooltip_text(tr("Test archive integrity"))
         .sensitive(false)
         .build();
     let props_btn = gtk::Button::builder()
-        .label("Properties")
+        .label(tr("Properties"))
         .icon_name("document-properties-symbolic")
-        .tooltip_text("Archive properties")
+        .tooltip_text(tr("Archive properties"))
         .sensitive(false)
         .build();
 
     let search_entry = gtk::SearchEntry::builder()
-        .placeholder_text("Filter entries…")
+        .placeholder_text(tr("Filter entries…"))
         .width_chars(22)
         .build();
 
@@ -120,7 +121,7 @@ pub fn launch_standalone(app: &gtk::Application, initial_archive: Option<PathBuf
     breadcrumb_bar.add_css_class("rarc-breadcrumb-bar");
     let up_btn = gtk::Button::builder()
         .icon_name("go-up-symbolic")
-        .tooltip_text("Up one folder")
+        .tooltip_text(tr("Up one folder"))
         .sensitive(false)
         .build();
     up_btn.add_css_class("flat");
@@ -315,7 +316,7 @@ fn run_viewer_worker<FWork, FOk>(
     state: &Rc<RefCell<ViewerState>>,
     expected_archive: Option<PathBuf>,
     progress_title: &str,
-    error_title: &'static str,
+    error_title: String,
     work: FWork,
     on_ok: FOk,
 ) where
@@ -355,7 +356,7 @@ fn run_viewer_worker<FWork, FOk>(
             }
             Err(ArchiveError::Cancelled) => {}
             Err(err) => {
-                show_message_dialog(Some(&win_err), error_title, &err.to_string());
+                show_message_dialog(Some(&win_err), &error_title, &err.to_string());
             }
         },
     );
@@ -410,11 +411,11 @@ fn build_empty_stack() -> gtk::Stack {
     empty_box.add_css_class("rarc-empty-state");
     let empty_icon = gtk::Image::from_icon_name("package-x-generic");
     empty_icon.set_pixel_size(64);
-    let empty_title = gtk::Label::new(Some("Open an archive or drop files here"));
+    let empty_title = gtk::Label::new(Some(&tr("Open an archive or drop files here")));
     empty_title.add_css_class("title-3");
-    let empty_sub = gtk::Label::new(Some(
+    let empty_sub = gtk::Label::new(Some(&tr(
         "Drop an archive to inspect it, or drop files/folders to create a new archive.",
-    ));
+    )));
     empty_sub.add_css_class("rarc-hint");
     empty_box.append(&empty_icon);
     empty_box.append(&empty_title);
@@ -448,12 +449,12 @@ fn make_open_archive(
         };
         let path_worker = archive_path.clone();
         let path_done = archive_path.clone();
-        let title = format!(
-            "Opening {}",
+        let title = tr("Opening {name}").replace(
+            "{name}",
             archive_path
                 .file_name()
                 .and_then(|s| s.to_str())
-                .unwrap_or("archive")
+                .unwrap_or("archive"),
         );
 
         let w_done = widgets_ref.clone();
@@ -465,7 +466,7 @@ fn make_open_archive(
             &state_ref,
             None,
             &title,
-            "Unable to Open Archive",
+            tr("Unable to Open Archive"),
             move |tx, cancel| {
                 let listing =
                     list_archive(&path_worker, initial_pw.as_deref(), Some(tx), cancel)?;
@@ -551,7 +552,7 @@ fn install_header_actions(
         let win_ref = widgets.window.clone();
         let open_fn = open_archive.clone();
         widgets.open_btn.connect_clicked(move |_| {
-            let dialog = gtk::FileDialog::builder().title("Open Archive").build();
+            let dialog = gtk::FileDialog::builder().title(tr("Open Archive")).build();
             let open_fn = open_fn.clone();
             dialog.open(Some(&win_ref), gio::Cancellable::NONE, move |res| {
                 if let Ok(file) = res
@@ -611,8 +612,8 @@ fn install_header_actions(
                 &win_ref,
                 &state_ref,
                 Some(archive_path),
-                "Testing Archive Integrity",
-                "Integrity Check Failed",
+                &tr("Testing Archive Integrity"),
+                tr("Integrity Check Failed"),
                 move |tx, cancel| {
                     let (entries_checked, bytes_checked, pw) = test_archive(
                         &arch_worker,
@@ -634,13 +635,17 @@ fn install_header_actions(
                         ..
                     } = summary
                     {
+                        let detail = trn(
+                            "The archive is intact.\nVerified {count} entry ({size}) with 0 errors.",
+                            "The archive is intact.\nVerified {count} entries ({size}) with 0 errors.",
+                            entries_checked as u64,
+                        )
+                        .replace("{count}", &entries_checked.to_string())
+                        .replace("{size}", &format_size(bytes_checked));
                         show_message_dialog(
                             Some(&win_done),
-                            "Integrity Check Passed",
-                            &format!(
-                                "The archive is intact.\nVerified {entries_checked} entries ({}) with 0 errors.",
-                                format_size(bytes_checked)
-                            ),
+                            &tr("Integrity Check Passed"),
+                            &detail,
                         );
                     }
                 },

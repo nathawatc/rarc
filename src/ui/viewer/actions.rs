@@ -12,6 +12,7 @@ use crate::archive::{
     add_to_archive, extract_archive_with_session, is_supported_archive_path, ArchiveEntry,
     EntryKind, ExtractOptions, ExtractSession, OperationSummary,
 };
+use crate::i18n::tr;
 use crate::ui::dialogs::{show_create_dialog, show_properties_dialog};
 use crate::ui::{select_folder_dialog, session_temp_dir, show_message_dialog};
 
@@ -228,8 +229,8 @@ pub(super) fn install_drop_in(
                 &win_ref,
                 &state_ref,
                 Some(arch_path),
-                "Adding Files to Archive",
-                "Failed to Add Files",
+                &tr("Adding Files to Archive"),
+                tr("Failed to Add Files"),
                 move |tx, cancel| {
                     let (_, password) = add_to_archive(
                         &arch_worker,
@@ -334,8 +335,8 @@ pub(super) fn activate_row(
     if is_symlink {
         show_message_dialog(
             Some(window),
-            "Cannot Open Symbolic Link",
-            "Symbolic links inside archives cannot be opened directly.",
+            &tr("Cannot Open Symbolic Link"),
+            &tr("Symbolic links inside archives cannot be opened directly."),
         );
         return;
     }
@@ -365,8 +366,8 @@ pub(super) fn activate_row(
         window,
         state,
         Some(archive_path),
-        &format!("Opening {name}"),
-        "Preview Failed",
+        &tr("Opening {name}").replace("{name}", &name),
+        tr("Preview Failed"),
         move |tx, cancel| {
             let mut session = ExtractSession::new(cached_pw, entry_size);
             extract_archive_with_session(
@@ -394,7 +395,11 @@ pub(super) fn activate_row(
                     if let Err(e) = lres
                         && !is_user_dismissed_error(&e)
                     {
-                        show_message_dialog(Some(&win_err), "Unable to Launch File", e.message());
+                        show_message_dialog(
+                            Some(&win_err),
+                            &tr("Unable to Launch File"),
+                            e.message(),
+                        );
                     }
                 });
             }
@@ -450,7 +455,7 @@ pub(super) fn start_extract_dialog(
     let state_done = state.clone();
     select_folder_dialog(
         Some(window.upcast_ref()),
-        "Extract To Folder",
+        &tr("Extract To Folder"),
         initial_folder.as_deref(),
         move |folder_opt| {
             let Some(dest_dir) = folder_opt else { return };
@@ -459,8 +464,8 @@ pub(super) fn start_extract_dialog(
                 &win_extract,
                 &state_done,
                 Some(archive_path),
-                "Extracting Archive",
-                "Extraction Failed",
+                &tr("Extracting Archive"),
+                tr("Extraction Failed"),
                 move |tx, cancel| {
                     let mut session = ExtractSession::new(cached_pw, total_bytes);
                     extract_archive_with_session(
@@ -524,8 +529,8 @@ fn copy_selected_to_clipboard(
         window,
         state,
         Some(archive_path),
-        "Copying to Clipboard",
-        "Copy Failed",
+        &tr("Copying to Clipboard"),
+        tr("Copy Failed"),
         move |tx, cancel| {
             let mut session = ExtractSession::new(cached_pw, total_bytes);
             extract_archive_with_session(

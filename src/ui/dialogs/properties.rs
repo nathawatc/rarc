@@ -4,7 +4,8 @@ use gtk4 as gtk;
 use gtk::prelude::*;
 
 use crate::archive::{ArchiveEntry, EntryKind};
-use crate::ui::{format_mtime, format_size};
+use crate::i18n::tr;
+use crate::ui::{format_mtime, format_size, translate_entry_kind};
 
 pub struct ArchivePropertiesInfo {
     pub archive_path: PathBuf,
@@ -21,13 +22,13 @@ pub fn show_properties_dialog(
     archive_info: &ArchivePropertiesInfo,
 ) {
     let title = match selected.len() {
-        0 => "Archive Properties",
-        1 => "Properties",
-        _ => "Selection Properties",
+        0 => tr("Archive Properties"),
+        1 => tr("Properties"),
+        _ => tr("Selection Properties"),
     };
 
     let win = gtk::Window::builder()
-        .title(title)
+        .title(&title)
         .modal(true)
         .resizable(false)
         .transient_for(parent)
@@ -41,7 +42,7 @@ pub fn show_properties_dialog(
         .column_spacing(14)
         .build();
 
-    let mut rows: Vec<(&str, String)> = Vec::new();
+    let mut rows: Vec<(String, String)> = Vec::new();
     match selected {
         [entry] => {
             let name = Path::new(&entry.path)
@@ -49,28 +50,34 @@ pub fn show_properties_dialog(
                 .and_then(|s| s.to_str())
                 .unwrap_or(&entry.path);
             let is_dir = entry.kind == EntryKind::Directory;
-            rows.push(("Name", name.to_string()));
-            rows.push(("Archive Path", entry.path.clone()));
-            rows.push(("Type", entry.kind.label(name)));
+            rows.push((tr("Name"), name.to_string()));
+            rows.push((tr("Archive Path"), entry.path.clone()));
+            rows.push((tr("Type"), translate_entry_kind(entry.kind, name)));
             if !is_dir {
                 rows.push((
-                    "Uncompressed Size",
-                    format!("{} ({} bytes)", format_size(entry.size), entry.size),
+                    tr("Uncompressed Size"),
+                    tr("{size} ({bytes} bytes)")
+                        .replace("{size}", &format_size(entry.size))
+                        .replace("{bytes}", &entry.size.to_string()),
                 ));
                 let comp = entry
                     .compressed_size
-                    .map(|c| format!("{} ({c} bytes)", format_size(c)))
+                    .map(|c| {
+                        tr("{size} ({bytes} bytes)")
+                            .replace("{size}", &format_size(c))
+                            .replace("{bytes}", &c.to_string())
+                    })
                     .unwrap_or_else(|| "—".to_string());
-                rows.push(("Compressed Size", comp));
+                rows.push((tr("Compressed Size"), comp));
             }
-            rows.push(("Modified Date", format_mtime(entry.mtime)));
-            rows.push(("Permissions", format_mode(entry.mode, is_dir)));
+            rows.push((tr("Modified Date"), format_mtime(entry.mtime)));
+            rows.push((tr("Permissions"), format_mode(entry.mode, is_dir)));
             rows.push((
-                "Encrypted",
-                if entry.is_encrypted { "Yes" } else { "No" }.to_string(),
+                tr("Encrypted"),
+                if entry.is_encrypted { tr("Yes") } else { tr("No") },
             ));
             if let Some(ref target) = entry.symlink_target {
-                rows.push(("Symlink Target", target.clone()));
+                rows.push((tr("Symlink Target"), target.clone()));
             }
         }
         [] => {
@@ -83,7 +90,11 @@ pub fn show_properties_dialog(
             let meta = std::fs::metadata(&archive_info.archive_path).ok();
             let disk_bytes = meta.as_ref().map(|m| m.len());
             let disk_size = disk_bytes
-                .map(|len| format!("{} ({len} bytes)", format_size(len)))
+                .map(|len| {
+                    tr("{size} ({bytes} bytes)")
+                        .replace("{size}", &format_size(len))
+                        .replace("{bytes}", &len.to_string())
+                })
                 .unwrap_or_else(|| "—".to_string());
             let modified = meta
                 .and_then(|m| m.modified().ok())
@@ -96,27 +107,25 @@ pub fn show_properties_dialog(
                 _ => "—".to_string(),
             };
             let fmt = if archive_info.format_name.is_empty() {
-                "Archive".to_string()
+                tr("Archive")
             } else {
                 archive_info.format_name.clone()
             };
-            rows.push(("Name", name));
-            rows.push(("Location", archive_info.archive_path.display().to_string()));
-            rows.push(("Format", fmt));
-            rows.push(("Modified Date", format_mtime(modified)));
-            rows.push(("Archive Size", disk_size));
+            rows.push((tr("Name"), name));
+            rows.push((tr("Location"), archive_info.archive_path.display().to_string()));
+            rows.push((tr("Format"), fmt));
+            rows.push((tr("Modified Date"), format_mtime(modified)));
+            rows.push((tr("Archive Size"), disk_size));
             rows.push((
-                "Content Size",
-                format!(
-                    "{} ({} bytes)",
-                    format_size(archive_info.total_uncompressed),
-                    archive_info.total_uncompressed
-                ),
+                tr("Content Size"),
+                tr("{size} ({bytes} bytes)")
+                    .replace("{size}", &format_size(archive_info.total_uncompressed))
+                    .replace("{bytes}", &archive_info.total_uncompressed.to_string()),
             ));
-            rows.push(("Compression Ratio", ratio));
-            rows.push(("Entries", archive_info.entry_count.to_string()));
+            rows.push((tr("Compression Ratio"), ratio));
+            rows.push((tr("Entries"), archive_info.entry_count.to_string()));
             rows.push((
-                "Encrypted Entries",
+                tr("Encrypted Entries"),
                 archive_info.encrypted_count.to_string(),
             ));
         }
@@ -128,22 +137,27 @@ pub fn show_properties_dialog(
             let files = many.len() - dirs;
             let total: u64 = many.iter().map(|e| e.size).sum();
             rows.push((
-                "Selected",
-                format!("{} items ({files} files, {dirs} folders)", many.len()),
+                tr("Selected"),
+                tr("{count} items ({files} files, {dirs} folders)")
+                    .replace("{count}", &many.len().to_string())
+                    .replace("{files}", &files.to_string())
+                    .replace("{dirs}", &dirs.to_string()),
             ));
             rows.push((
-                "Uncompressed Size",
-                format!("{} ({total} bytes)", format_size(total)),
+                tr("Uncompressed Size"),
+                tr("{size} ({bytes} bytes)")
+                    .replace("{size}", &format_size(total))
+                    .replace("{bytes}", &total.to_string()),
             ));
             rows.push((
-                "Encrypted Items",
+                tr("Encrypted Items"),
                 many.iter().filter(|e| e.is_encrypted).count().to_string(),
             ));
         }
     }
 
     for (idx, (key, val)) in rows.into_iter().enumerate() {
-        let k_lbl = gtk::Label::new(Some(key));
+        let k_lbl = gtk::Label::new(Some(&key));
         k_lbl.set_xalign(1.0);
         k_lbl.set_valign(gtk::Align::Start);
         k_lbl.add_css_class("rarc-muted");
@@ -161,7 +175,7 @@ pub fn show_properties_dialog(
         grid.attach(&v_lbl, 1, idx as i32, 1, 1);
     }
 
-    let close_btn = gtk::Button::with_label("Close");
+    let close_btn = gtk::Button::with_label(&tr("Close"));
     close_btn.set_halign(gtk::Align::End);
     close_btn.add_css_class("suggested-action");
     let win_ref = win.clone();

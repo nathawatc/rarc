@@ -1,4 +1,5 @@
 mod archive;
+mod i18n;
 mod ui;
 
 use std::cell::RefCell;
@@ -16,6 +17,7 @@ use crate::archive::{
     extract_archive_with_session, list_archive, resolve_extract_here_dir, spawn_worker,
     ArchiveError, ExtractOptions, ExtractSession, OperationSummary,
 };
+use crate::i18n::tr;
 use crate::ui::dialogs::{run_worker_with_progress, show_create_dialog};
 use crate::ui::{select_folder_dialog, show_message_dialog};
 
@@ -91,6 +93,7 @@ where
 }
 
 fn main() -> ExitCode {
+    i18n::init();
     let mode = match parse_args() {
         Ok(m) => m,
         Err(err) => {
@@ -183,13 +186,24 @@ fn run_tap_mode(app: &gtk::Application, action: TapAction, paths: Vec<PathBuf>) 
                 })
             });
 
-            run_worker_with_progress(Some(app), None, "Extracting Here", rx, cancel, |res| {
-                if let Err(err) = res
-                    && !matches!(err, ArchiveError::Cancelled)
-                {
-                    show_message_dialog(None::<&gtk::Window>, "Extraction Failed", &err.to_string());
-                }
-            });
+            run_worker_with_progress(
+                Some(app),
+                None,
+                &tr("Extracting Here"),
+                rx,
+                cancel,
+                |res| {
+                    if let Err(err) = res
+                        && !matches!(err, ArchiveError::Cancelled)
+                    {
+                        show_message_dialog(
+                            None::<&gtk::Window>,
+                            &tr("Extraction Failed"),
+                            &err.to_string(),
+                        );
+                    }
+                },
+            );
         }
         TapAction::ExtractTo => {
             let app_hold = Rc::new(RefCell::new(Some(app.hold())));
@@ -200,7 +214,7 @@ fn run_tap_mode(app: &gtk::Application, action: TapAction, paths: Vec<PathBuf>) 
                 .map(PathBuf::from);
             select_folder_dialog(
                 None,
-                "Extract To Folder",
+                &tr("Extract To Folder"),
                 initial_dir.as_deref(),
                 move |folder_opt| {
                     let Some(dest_dir) = folder_opt else {
@@ -232,7 +246,7 @@ fn run_tap_mode(app: &gtk::Application, action: TapAction, paths: Vec<PathBuf>) 
                     run_worker_with_progress(
                         Some(&app_cloned),
                         None,
-                        "Extracting Archive",
+                        &tr("Extracting Archive"),
                         rx,
                         cancel,
                         |res| {
@@ -241,7 +255,7 @@ fn run_tap_mode(app: &gtk::Application, action: TapAction, paths: Vec<PathBuf>) 
                             {
                                 show_message_dialog(
                                     None::<&gtk::Window>,
-                                    "Extraction Failed",
+                                    &tr("Extraction Failed"),
                                     &err.to_string(),
                                 );
                             }

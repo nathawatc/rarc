@@ -1,0 +1,479 @@
+# SOME DESCRIPTIVE TITLE.
+# Copyright (C) YEAR THE PACKAGE'S COPYRIGHT HOLDER
+# This file is distributed under the same license as the rarc package.
+# FIRST AUTHOR <EMAIL@ADDRESS>, YEAR.
+#
+#, fuzzy
+msgid ""
+msgstr ""
+"Project-Id-Version: rarc 0.1.0\n"
+"Report-Msgid-Bugs-To: \n"
+"POT-Creation-Date: 2026-11-19 19:18+0700\n"
+"PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
+"Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
+"Language-Team: LANGUAGE <LL@li.org>\n"
+"Language: \n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=INTEGER; plural=EXPRESSION;\n"
+
+#: src/main.rs:192
+msgid "Extracting Here"
+msgstr ""
+
+#: src/main.rs:201 src/main.rs:258 src/ui/viewer/actions.rs:468
+msgid "Extraction Failed"
+msgstr ""
+
+#: src/main.rs:217 src/ui/viewer/actions.rs:458
+msgid "Extract To Folder"
+msgstr ""
+
+#: src/main.rs:249 src/ui/viewer/actions.rs:467
+msgid "Extracting Archive"
+msgstr ""
+
+#: src/ui/mod.rs:62
+msgid "Folder"
+msgstr ""
+
+#: src/ui/mod.rs:63
+msgid "Symbolic Link"
+msgstr ""
+
+#: src/ui/mod.rs:64
+msgid "Special"
+msgstr ""
+
+#: src/ui/mod.rs:67
+#, rust-format
+msgid "{ext} File"
+msgstr ""
+
+#: src/ui/mod.rs:69
+msgid "File"
+msgstr ""
+
+#: src/ui/mod.rs:142 src/ui/dialogs/properties.rs:178
+msgid "Close"
+msgstr ""
+
+#: src/ui/dialogs/mod.rs:54
+msgid "Preparing…"
+msgstr ""
+
+#: src/ui/dialogs/mod.rs:63 src/ui/dialogs/mod.rs:218
+#: src/ui/dialogs/create.rs:139 src/ui/dialogs/create.rs:363
+msgid "Cancel"
+msgstr ""
+
+#: src/ui/dialogs/mod.rs:72 src/ui/dialogs/mod.rs:83
+msgid "Cancelling…"
+msgstr ""
+
+#: src/ui/dialogs/mod.rs:192
+#, rust-format
+msgid "Enter the passphrase for \"{archive}\":"
+msgstr ""
+
+#: src/ui/dialogs/mod.rs:193
+msgid "Password Required"
+msgstr ""
+
+#: src/ui/dialogs/mod.rs:203
+msgid "Incorrect passphrase. Please try again."
+msgstr ""
+
+#: src/ui/dialogs/mod.rs:219
+msgid "Unlock"
+msgstr ""
+
+#: src/ui/dialogs/mod.rs:251
+msgid "File Already Exists"
+msgstr ""
+
+#: src/ui/dialogs/mod.rs:253
+#, rust-format
+msgid ""
+"A file already exists at:\n"
+"{path}"
+msgstr ""
+
+#: src/ui/dialogs/mod.rs:264
+msgid "Rename to:"
+msgstr ""
+
+#: src/ui/dialogs/mod.rs:269
+msgid "Rename"
+msgstr ""
+
+#: src/ui/dialogs/mod.rs:277
+msgid "Skip All"
+msgstr ""
+
+#: src/ui/dialogs/mod.rs:278
+msgid "Skip"
+msgstr ""
+
+#: src/ui/dialogs/mod.rs:279
+msgid "Overwrite All"
+msgstr ""
+
+#: src/ui/dialogs/mod.rs:280
+msgid "Overwrite"
+msgstr ""
+
+#: src/ui/dialogs/create.rs:31
+msgid "Create Archive"
+msgstr ""
+
+#: src/ui/dialogs/create.rs:71
+msgid "Archive Name"
+msgstr ""
+
+#: src/ui/dialogs/create.rs:79 src/ui/dialogs/properties.rs:116
+msgid "Format"
+msgstr ""
+
+#: src/ui/dialogs/create.rs:86 src/ui/dialogs/properties.rs:115
+msgid "Location"
+msgstr ""
+
+#: src/ui/dialogs/create.rs:94
+msgid "Choose…"
+msgstr ""
+
+#: src/ui/dialogs/create.rs:98
+msgid "Password"
+msgstr ""
+
+#: src/ui/dialogs/create.rs:106 src/ui/dialogs/create.rs:163
+msgid "Encryption is only supported for .zip archives"
+msgstr ""
+
+#: src/ui/dialogs/create.rs:112
+msgid "Inputs"
+msgstr ""
+
+#: src/ui/dialogs/create.rs:119
+msgid "Add Files…"
+msgstr ""
+
+#: src/ui/dialogs/create.rs:120
+msgid "Add Folder…"
+msgstr ""
+
+#: src/ui/dialogs/create.rs:140
+msgid "Create"
+msgstr ""
+
+#: src/ui/dialogs/create.rs:165
+msgid "Optional AES-256 passphrase for .zip"
+msgstr ""
+
+#: src/ui/dialogs/create.rs:180
+msgid "Select Destination Folder"
+msgstr ""
+
+#: src/ui/dialogs/create.rs:199
+msgid "Select Files to Add"
+msgstr ""
+
+#: src/ui/dialogs/create.rs:234
+msgid "Select Folder to Add"
+msgstr ""
+
+#: src/ui/dialogs/create.rs:278
+msgid "Invalid Archive Name"
+msgstr ""
+
+#: src/ui/dialogs/create.rs:279
+msgid "Please enter a valid filename without path separators."
+msgstr ""
+
+#: src/ui/dialogs/create.rs:331
+#, rust-format
+msgid "Creating {name}"
+msgstr ""
+
+#: src/ui/dialogs/create.rs:348
+msgid "Failed to Create Archive"
+msgstr ""
+
+#: src/ui/dialogs/create.rs:364
+msgid "Replace"
+msgstr ""
+
+#: src/ui/dialogs/create.rs:367
+msgid "Replace Existing Archive?"
+msgstr ""
+
+#: src/ui/dialogs/create.rs:369
+#, rust-format
+msgid "A file named \"{name}\" already exists. Do you want to overwrite it?"
+msgstr ""
+
+#: src/ui/dialogs/create.rs:404
+msgid "Tar + Zstandard (.tar.zst)"
+msgstr ""
+
+#: src/ui/dialogs/create.rs:405
+msgid "ZIP Archive (.zip)"
+msgstr ""
+
+#: src/ui/dialogs/create.rs:406
+msgid "7-Zip Archive (.7z)"
+msgstr ""
+
+#: src/ui/dialogs/create.rs:407
+msgid "Tar + XZ (.tar.xz)"
+msgstr ""
+
+#: src/ui/dialogs/create.rs:408
+msgid "Tar + Gzip (.tar.gz)"
+msgstr ""
+
+#: src/ui/dialogs/create.rs:414
+msgid "No files selected"
+msgstr ""
+
+#: src/ui/dialogs/create.rs:419
+msgid "1 item"
+msgstr ""
+
+#: src/ui/dialogs/create.rs:420
+#, rust-format
+msgid "{n} item selected"
+msgid_plural "{n} items selected"
+msgstr[0] ""
+msgstr[1] ""
+
+#: src/ui/dialogs/properties.rs:25
+msgid "Archive Properties"
+msgstr ""
+
+#: src/ui/dialogs/properties.rs:26 src/ui/viewer/mod.rs:98
+#: src/ui/viewer/columns.rs:33
+msgid "Properties"
+msgstr ""
+
+#: src/ui/dialogs/properties.rs:27
+msgid "Selection Properties"
+msgstr ""
+
+#: src/ui/dialogs/properties.rs:53 src/ui/dialogs/properties.rs:114
+#: src/ui/viewer/columns.rs:124
+msgid "Name"
+msgstr ""
+
+#: src/ui/dialogs/properties.rs:54
+msgid "Archive Path"
+msgstr ""
+
+#: src/ui/dialogs/properties.rs:55 src/ui/viewer/columns.rs:152
+msgid "Type"
+msgstr ""
+
+#: src/ui/dialogs/properties.rs:58 src/ui/dialogs/properties.rs:147
+#: src/ui/viewer/columns.rs:135
+msgid "Uncompressed Size"
+msgstr ""
+
+#: src/ui/dialogs/properties.rs:59 src/ui/dialogs/properties.rs:66
+#: src/ui/dialogs/properties.rs:94 src/ui/dialogs/properties.rs:121
+#: src/ui/dialogs/properties.rs:148
+#, rust-format
+msgid "{size} ({bytes} bytes)"
+msgstr ""
+
+#: src/ui/dialogs/properties.rs:71
+msgid "Compressed Size"
+msgstr ""
+
+#: src/ui/dialogs/properties.rs:73 src/ui/dialogs/properties.rs:117
+#: src/ui/viewer/columns.rs:167
+msgid "Modified Date"
+msgstr ""
+
+#: src/ui/dialogs/properties.rs:74
+msgid "Permissions"
+msgstr ""
+
+#: src/ui/dialogs/properties.rs:76 src/ui/viewer/columns.rs:107
+msgid "Encrypted"
+msgstr ""
+
+#: src/ui/dialogs/properties.rs:77
+msgid "Yes"
+msgstr ""
+
+#: src/ui/dialogs/properties.rs:77
+msgid "No"
+msgstr ""
+
+#: src/ui/dialogs/properties.rs:80
+msgid "Symlink Target"
+msgstr ""
+
+#: src/ui/dialogs/properties.rs:110
+msgid "Archive"
+msgstr ""
+
+#: src/ui/dialogs/properties.rs:118
+msgid "Archive Size"
+msgstr ""
+
+#: src/ui/dialogs/properties.rs:120
+msgid "Content Size"
+msgstr ""
+
+#: src/ui/dialogs/properties.rs:125
+msgid "Compression Ratio"
+msgstr ""
+
+#: src/ui/dialogs/properties.rs:126
+msgid "Entries"
+msgstr ""
+
+#: src/ui/dialogs/properties.rs:128
+msgid "Encrypted Entries"
+msgstr ""
+
+#: src/ui/dialogs/properties.rs:140
+msgid "Selected"
+msgstr ""
+
+#: src/ui/dialogs/properties.rs:141
+#, rust-format
+msgid "{count} items ({files} files, {dirs} folders)"
+msgstr ""
+
+#: src/ui/dialogs/properties.rs:153
+msgid "Encrypted Items"
+msgstr ""
+
+#: src/ui/viewer/mod.rs:70 src/ui/viewer/columns.rs:23
+msgid "Open"
+msgstr ""
+
+#: src/ui/viewer/mod.rs:72
+msgid "Open an archive"
+msgstr ""
+
+#: src/ui/viewer/mod.rs:80
+msgid "Create a new archive"
+msgstr ""
+
+#: src/ui/viewer/mod.rs:88
+msgid "Extract selected entries or entire archive"
+msgstr ""
+
+#: src/ui/viewer/mod.rs:92
+msgid "Test"
+msgstr ""
+
+#: src/ui/viewer/mod.rs:94
+msgid "Test archive integrity"
+msgstr ""
+
+#: src/ui/viewer/mod.rs:100
+msgid "Archive properties"
+msgstr ""
+
+#: src/ui/viewer/mod.rs:105
+msgid "Filter entries…"
+msgstr ""
+
+#: src/ui/viewer/mod.rs:124
+msgid "Up one folder"
+msgstr ""
+
+#: src/ui/viewer/mod.rs:414
+msgid "Open an archive or drop files here"
+msgstr ""
+
+#: src/ui/viewer/mod.rs:417
+msgid ""
+"Drop an archive to inspect it, or drop files/folders to create a new archive."
+msgstr ""
+
+#: src/ui/viewer/mod.rs:452 src/ui/viewer/actions.rs:369
+#, rust-format
+msgid "Opening {name}"
+msgstr ""
+
+#: src/ui/viewer/mod.rs:469
+msgid "Unable to Open Archive"
+msgstr ""
+
+#: src/ui/viewer/mod.rs:555
+msgid "Open Archive"
+msgstr ""
+
+#: src/ui/viewer/mod.rs:615
+msgid "Testing Archive Integrity"
+msgstr ""
+
+#: src/ui/viewer/mod.rs:616
+msgid "Integrity Check Failed"
+msgstr ""
+
+#: src/ui/viewer/mod.rs:639
+#, rust-format
+msgid ""
+"The archive is intact.\n"
+"Verified {count} entry ({size}) with 0 errors."
+msgid_plural ""
+"The archive is intact.\n"
+"Verified {count} entries ({size}) with 0 errors."
+msgstr[0] ""
+msgstr[1] ""
+
+#: src/ui/viewer/mod.rs:647
+msgid "Integrity Check Passed"
+msgstr ""
+
+#: src/ui/viewer/columns.rs:24
+msgid "Open With…"
+msgstr ""
+
+#: src/ui/viewer/columns.rs:28
+msgid "Extract Selected…"
+msgstr ""
+
+#: src/ui/viewer/columns.rs:29
+msgid "Copy"
+msgstr ""
+
+#: src/ui/viewer/actions.rs:232
+msgid "Adding Files to Archive"
+msgstr ""
+
+#: src/ui/viewer/actions.rs:233
+msgid "Failed to Add Files"
+msgstr ""
+
+#: src/ui/viewer/actions.rs:338
+msgid "Cannot Open Symbolic Link"
+msgstr ""
+
+#: src/ui/viewer/actions.rs:339
+msgid "Symbolic links inside archives cannot be opened directly."
+msgstr ""
+
+#: src/ui/viewer/actions.rs:370
+msgid "Preview Failed"
+msgstr ""
+
+#: src/ui/viewer/actions.rs:400
+msgid "Unable to Launch File"
+msgstr ""
+
+#: src/ui/viewer/actions.rs:532
+msgid "Copying to Clipboard"
+msgstr ""
+
+#: src/ui/viewer/actions.rs:533
+msgid "Copy Failed"
+msgstr ""

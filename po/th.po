@@ -1,0 +1,480 @@
+# Thai translation for rarc.
+# Copyright (C) 2026 rarc contributors
+# This file is distributed under the same license as the rarc package.
+#
+msgid ""
+msgstr ""
+"Project-Id-Version: rarc 0.1.0\n"
+"Report-Msgid-Bugs-To: \n"
+"POT-Creation-Date: 2026-11-19 19:18+0700\n"
+"PO-Revision-Date: 2026-11-19 19:18+0700\n"
+"Last-Translator: rarc contributors\n"
+"Language-Team: Thai\n"
+"Language: th\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=1; plural=0;\n"
+
+#: src/main.rs:192
+msgid "Extracting Here"
+msgstr "กำลังแตกไฟล์ที่นี่"
+
+#: src/main.rs:201 src/main.rs:258 src/ui/viewer/actions.rs:468
+msgid "Extraction Failed"
+msgstr "แตกไฟล์ไม่สำเร็จ"
+
+#: src/main.rs:217 src/ui/viewer/actions.rs:458
+msgid "Extract To Folder"
+msgstr "แตกไฟล์ไปยังโฟลเดอร์"
+
+#: src/main.rs:249 src/ui/viewer/actions.rs:467
+msgid "Extracting Archive"
+msgstr "กำลังแตกแฟ้มจัดเก็บ"
+
+#: src/ui/mod.rs:62
+msgid "Folder"
+msgstr "โฟลเดอร์"
+
+#: src/ui/mod.rs:63
+msgid "Symbolic Link"
+msgstr "ลิงก์สัญลักษณ์"
+
+#: src/ui/mod.rs:64
+msgid "Special"
+msgstr "พิเศษ"
+
+#: src/ui/mod.rs:67
+#, rust-format
+msgid "{ext} File"
+msgstr "ไฟล์ {ext}"
+
+#: src/ui/mod.rs:69
+msgid "File"
+msgstr "ไฟล์"
+
+#: src/ui/mod.rs:142 src/ui/dialogs/properties.rs:178
+msgid "Close"
+msgstr "ปิด"
+
+#: src/ui/dialogs/mod.rs:54
+msgid "Preparing…"
+msgstr "กำลังเตรียมการ…"
+
+#: src/ui/dialogs/mod.rs:63 src/ui/dialogs/mod.rs:218
+#: src/ui/dialogs/create.rs:139 src/ui/dialogs/create.rs:363
+msgid "Cancel"
+msgstr "ยกเลิก"
+
+#: src/ui/dialogs/mod.rs:72 src/ui/dialogs/mod.rs:83
+msgid "Cancelling…"
+msgstr "กำลังยกเลิก…"
+
+#: src/ui/dialogs/mod.rs:192
+#, rust-format
+msgid "Enter the passphrase for \"{archive}\":"
+msgstr "ป้อนรหัสผ่านสำหรับ \"{archive}\":"
+
+#: src/ui/dialogs/mod.rs:193
+msgid "Password Required"
+msgstr "ต้องใช้รหัสผ่าน"
+
+#: src/ui/dialogs/mod.rs:203
+msgid "Incorrect passphrase. Please try again."
+msgstr "รหัสผ่านไม่ถูกต้อง กรุณาลองใหม่อีกครั้ง"
+
+#: src/ui/dialogs/mod.rs:219
+msgid "Unlock"
+msgstr "ปลดล็อก"
+
+#: src/ui/dialogs/mod.rs:251
+msgid "File Already Exists"
+msgstr "มีไฟล์นี้อยู่แล้ว"
+
+#: src/ui/dialogs/mod.rs:253
+#, rust-format
+msgid ""
+"A file already exists at:\n"
+"{path}"
+msgstr ""
+"มีไฟล์อยู่แล้วที่:\n"
+"{path}"
+
+#: src/ui/dialogs/mod.rs:264
+msgid "Rename to:"
+msgstr "เปลี่ยนชื่อเป็น:"
+
+#: src/ui/dialogs/mod.rs:269
+msgid "Rename"
+msgstr "เปลี่ยนชื่อ"
+
+#: src/ui/dialogs/mod.rs:277
+msgid "Skip All"
+msgstr "ข้ามทั้งหมด"
+
+#: src/ui/dialogs/mod.rs:278
+msgid "Skip"
+msgstr "ข้าม"
+
+#: src/ui/dialogs/mod.rs:279
+msgid "Overwrite All"
+msgstr "เขียนทับทั้งหมด"
+
+#: src/ui/dialogs/mod.rs:280
+msgid "Overwrite"
+msgstr "เขียนทับ"
+
+#: src/ui/dialogs/create.rs:31
+msgid "Create Archive"
+msgstr "สร้างแฟ้มจัดเก็บ"
+
+#: src/ui/dialogs/create.rs:71
+msgid "Archive Name"
+msgstr "ชื่อแฟ้มจัดเก็บ"
+
+#: src/ui/dialogs/create.rs:79 src/ui/dialogs/properties.rs:116
+msgid "Format"
+msgstr "รูปแบบ"
+
+#: src/ui/dialogs/create.rs:86 src/ui/dialogs/properties.rs:115
+msgid "Location"
+msgstr "ตำแหน่งที่ตั้ง"
+
+#: src/ui/dialogs/create.rs:94
+msgid "Choose…"
+msgstr "เลือก…"
+
+#: src/ui/dialogs/create.rs:98
+msgid "Password"
+msgstr "รหัสผ่าน"
+
+#: src/ui/dialogs/create.rs:106 src/ui/dialogs/create.rs:163
+msgid "Encryption is only supported for .zip archives"
+msgstr "รองรับการเข้ารหัสสำหรับไฟล์ .zip เท่านั้น"
+
+#: src/ui/dialogs/create.rs:112
+msgid "Inputs"
+msgstr "ไฟล์ที่เลือก"
+
+#: src/ui/dialogs/create.rs:119
+msgid "Add Files…"
+msgstr "เพิ่มไฟล์…"
+
+#: src/ui/dialogs/create.rs:120
+msgid "Add Folder…"
+msgstr "เพิ่มโฟลเดอร์…"
+
+#: src/ui/dialogs/create.rs:140
+msgid "Create"
+msgstr "สร้าง"
+
+#: src/ui/dialogs/create.rs:165
+msgid "Optional AES-256 passphrase for .zip"
+msgstr "รหัสผ่าน AES-256 สำหรับ .zip (ไม่บังคับ)"
+
+#: src/ui/dialogs/create.rs:180
+msgid "Select Destination Folder"
+msgstr "เลือกโฟลเดอร์ปลายทาง"
+
+#: src/ui/dialogs/create.rs:199
+msgid "Select Files to Add"
+msgstr "เลือกไฟล์ที่จะเพิ่ม"
+
+#: src/ui/dialogs/create.rs:234
+msgid "Select Folder to Add"
+msgstr "เลือกโฟลเดอร์ที่จะเพิ่ม"
+
+#: src/ui/dialogs/create.rs:278
+msgid "Invalid Archive Name"
+msgstr "ชื่อแฟ้มจัดเก็บไม่ถูกต้อง"
+
+#: src/ui/dialogs/create.rs:279
+msgid "Please enter a valid filename without path separators."
+msgstr "กรุณาป้อนชื่อไฟล์ที่ถูกต้องโดยไม่มีเครื่องหมายคั่นพาธ"
+
+#: src/ui/dialogs/create.rs:331
+#, rust-format
+msgid "Creating {name}"
+msgstr "กำลังสร้าง {name}"
+
+#: src/ui/dialogs/create.rs:348
+msgid "Failed to Create Archive"
+msgstr "สร้างแฟ้มจัดเก็บไม่สำเร็จ"
+
+#: src/ui/dialogs/create.rs:364
+msgid "Replace"
+msgstr "แทนที่"
+
+#: src/ui/dialogs/create.rs:367
+msgid "Replace Existing Archive?"
+msgstr "แทนที่แฟ้มจัดเก็บที่มีอยู่เดิมหรือไม่?"
+
+#: src/ui/dialogs/create.rs:369
+#, rust-format
+msgid "A file named \"{name}\" already exists. Do you want to overwrite it?"
+msgstr "มีไฟล์ชื่อ \"{name}\" อยู่แล้ว คุณต้องการเขียนทับหรือไม่?"
+
+#: src/ui/dialogs/create.rs:404
+msgid "Tar + Zstandard (.tar.zst)"
+msgstr "Tar + Zstandard (.tar.zst)"
+
+#: src/ui/dialogs/create.rs:405
+msgid "ZIP Archive (.zip)"
+msgstr "แฟ้มจัดเก็บ ZIP (.zip)"
+
+#: src/ui/dialogs/create.rs:406
+msgid "7-Zip Archive (.7z)"
+msgstr "แฟ้มจัดเก็บ 7-Zip (.7z)"
+
+#: src/ui/dialogs/create.rs:407
+msgid "Tar + XZ (.tar.xz)"
+msgstr "Tar + XZ (.tar.xz)"
+
+#: src/ui/dialogs/create.rs:408
+msgid "Tar + Gzip (.tar.gz)"
+msgstr "Tar + Gzip (.tar.gz)"
+
+#: src/ui/dialogs/create.rs:414
+msgid "No files selected"
+msgstr "ยังไม่ได้เลือกไฟล์"
+
+#: src/ui/dialogs/create.rs:419
+msgid "1 item"
+msgstr "1 รายการ"
+
+#: src/ui/dialogs/create.rs:420
+#, rust-format
+msgid "{n} item selected"
+msgid_plural "{n} items selected"
+msgstr[0] "เลือกแล้ว {n} รายการ"
+
+#: src/ui/dialogs/properties.rs:25
+msgid "Archive Properties"
+msgstr "คุณสมบัติแฟ้มจัดเก็บ"
+
+#: src/ui/dialogs/properties.rs:26 src/ui/viewer/mod.rs:98
+#: src/ui/viewer/columns.rs:33
+msgid "Properties"
+msgstr "คุณสมบัติ"
+
+#: src/ui/dialogs/properties.rs:27
+msgid "Selection Properties"
+msgstr "คุณสมบัติรายการที่เลือก"
+
+#: src/ui/dialogs/properties.rs:53 src/ui/dialogs/properties.rs:114
+#: src/ui/viewer/columns.rs:124
+msgid "Name"
+msgstr "ชื่อ"
+
+#: src/ui/dialogs/properties.rs:54
+msgid "Archive Path"
+msgstr "พาธภายในแฟ้มจัดเก็บ"
+
+#: src/ui/dialogs/properties.rs:55 src/ui/viewer/columns.rs:152
+msgid "Type"
+msgstr "ประเภท"
+
+#: src/ui/dialogs/properties.rs:58 src/ui/dialogs/properties.rs:147
+#: src/ui/viewer/columns.rs:135
+msgid "Uncompressed Size"
+msgstr "ขนาดก่อนบีบอัด"
+
+#: src/ui/dialogs/properties.rs:59 src/ui/dialogs/properties.rs:66
+#: src/ui/dialogs/properties.rs:94 src/ui/dialogs/properties.rs:121
+#: src/ui/dialogs/properties.rs:148
+#, rust-format
+msgid "{size} ({bytes} bytes)"
+msgstr "{size} ({bytes} ไบต์)"
+
+#: src/ui/dialogs/properties.rs:71
+msgid "Compressed Size"
+msgstr "ขนาดหลังบีบอัด"
+
+#: src/ui/dialogs/properties.rs:73 src/ui/dialogs/properties.rs:117
+#: src/ui/viewer/columns.rs:167
+msgid "Modified Date"
+msgstr "วันที่แก้ไข"
+
+#: src/ui/dialogs/properties.rs:74
+msgid "Permissions"
+msgstr "สิทธิ์การเข้าถึง"
+
+#: src/ui/dialogs/properties.rs:76 src/ui/viewer/columns.rs:107
+msgid "Encrypted"
+msgstr "เข้ารหัส"
+
+#: src/ui/dialogs/properties.rs:77
+msgid "Yes"
+msgstr "ใช่"
+
+#: src/ui/dialogs/properties.rs:77
+msgid "No"
+msgstr "ไม่"
+
+#: src/ui/dialogs/properties.rs:80
+msgid "Symlink Target"
+msgstr "ปลายทางลิงก์สัญลักษณ์"
+
+#: src/ui/dialogs/properties.rs:110
+msgid "Archive"
+msgstr "แฟ้มจัดเก็บ"
+
+#: src/ui/dialogs/properties.rs:118
+msgid "Archive Size"
+msgstr "ขนาดแฟ้มจัดเก็บ"
+
+#: src/ui/dialogs/properties.rs:120
+msgid "Content Size"
+msgstr "ขนาดเนื้อหา"
+
+#: src/ui/dialogs/properties.rs:125
+msgid "Compression Ratio"
+msgstr "อัตราการบีบอัด"
+
+#: src/ui/dialogs/properties.rs:126
+msgid "Entries"
+msgstr "จำนวนรายการ"
+
+#: src/ui/dialogs/properties.rs:128
+msgid "Encrypted Entries"
+msgstr "รายการที่เข้ารหัส"
+
+#: src/ui/dialogs/properties.rs:140
+msgid "Selected"
+msgstr "ที่เลือก"
+
+#: src/ui/dialogs/properties.rs:141
+#, rust-format
+msgid "{count} items ({files} files, {dirs} folders)"
+msgstr "{count} รายการ ({files} ไฟล์, {dirs} โฟลเดอร์)"
+
+#: src/ui/dialogs/properties.rs:153
+msgid "Encrypted Items"
+msgstr "รายการที่เข้ารหัส"
+
+#: src/ui/viewer/mod.rs:70 src/ui/viewer/columns.rs:23
+msgid "Open"
+msgstr "เปิด"
+
+#: src/ui/viewer/mod.rs:72
+msgid "Open an archive"
+msgstr "เปิดแฟ้มจัดเก็บ"
+
+#: src/ui/viewer/mod.rs:80
+msgid "Create a new archive"
+msgstr "สร้างแฟ้มจัดเก็บใหม่"
+
+#: src/ui/viewer/mod.rs:88
+msgid "Extract selected entries or entire archive"
+msgstr "แตกไฟล์ที่เลือกหรือทั้งแฟ้มจัดเก็บ"
+
+#: src/ui/viewer/mod.rs:92
+msgid "Test"
+msgstr "ทดสอบ"
+
+#: src/ui/viewer/mod.rs:94
+msgid "Test archive integrity"
+msgstr "ทดสอบความสมบูรณ์ของแฟ้มจัดเก็บ"
+
+#: src/ui/viewer/mod.rs:100
+msgid "Archive properties"
+msgstr "คุณสมบัติแฟ้มจัดเก็บ"
+
+#: src/ui/viewer/mod.rs:105
+msgid "Filter entries…"
+msgstr "กรองรายการ…"
+
+#: src/ui/viewer/mod.rs:124
+msgid "Up one folder"
+msgstr "ขึ้นไปหนึ่งโฟลเดอร์"
+
+#: src/ui/viewer/mod.rs:414
+msgid "Open an archive or drop files here"
+msgstr "เปิดแฟ้มจัดเก็บหรือวางไฟล์ที่นี่"
+
+#: src/ui/viewer/mod.rs:417
+msgid ""
+"Drop an archive to inspect it, or drop files/folders to create a new archive."
+msgstr ""
+"วางแฟ้มจัดเก็บเพื่อเปิดดู หรือวางไฟล์/โฟลเดอร์เพื่อสร้างแฟ้มจัดเก็บใหม่"
+
+#: src/ui/viewer/mod.rs:452 src/ui/viewer/actions.rs:369
+#, rust-format
+msgid "Opening {name}"
+msgstr "กำลังเปิด {name}"
+
+#: src/ui/viewer/mod.rs:469
+msgid "Unable to Open Archive"
+msgstr "ไม่สามารถเปิดแฟ้มจัดเก็บได้"
+
+#: src/ui/viewer/mod.rs:555
+msgid "Open Archive"
+msgstr "เปิดแฟ้มจัดเก็บ"
+
+#: src/ui/viewer/mod.rs:615
+msgid "Testing Archive Integrity"
+msgstr "กำลังทดสอบความสมบูรณ์ของแฟ้มจัดเก็บ"
+
+#: src/ui/viewer/mod.rs:616
+msgid "Integrity Check Failed"
+msgstr "การตรวจสอบความสมบูรณ์ล้มเหลว"
+
+#: src/ui/viewer/mod.rs:639
+#, rust-format
+msgid ""
+"The archive is intact.\n"
+"Verified {count} entry ({size}) with 0 errors."
+msgid_plural ""
+"The archive is intact.\n"
+"Verified {count} entries ({size}) with 0 errors."
+msgstr[0] ""
+"แฟ้มจัดเก็บสมบูรณ์ดี\n"
+"ตรวจสอบแล้ว {count} รายการ ({size}) ไม่พบข้อผิดพลาด"
+
+#: src/ui/viewer/mod.rs:647
+msgid "Integrity Check Passed"
+msgstr "การตรวจสอบความสมบูรณ์ผ่าน"
+
+#: src/ui/viewer/columns.rs:24
+msgid "Open With…"
+msgstr "เปิดด้วย…"
+
+#: src/ui/viewer/columns.rs:28
+msgid "Extract Selected…"
+msgstr "แตกไฟล์ที่เลือก…"
+
+#: src/ui/viewer/columns.rs:29
+msgid "Copy"
+msgstr "คัดลอก"
+
+#: src/ui/viewer/actions.rs:232
+msgid "Adding Files to Archive"
+msgstr "กำลังเพิ่มไฟล์เข้าแฟ้มจัดเก็บ"
+
+#: src/ui/viewer/actions.rs:233
+msgid "Failed to Add Files"
+msgstr "เพิ่มไฟล์ไม่สำเร็จ"
+
+#: src/ui/viewer/actions.rs:338
+msgid "Cannot Open Symbolic Link"
+msgstr "ไม่สามารถเปิดลิงก์สัญลักษณ์ได้"
+
+#: src/ui/viewer/actions.rs:339
+msgid "Symbolic links inside archives cannot be opened directly."
+msgstr "ไม่สามารถเปิดลิงก์สัญลักษณ์ภายในแฟ้มจัดเก็บได้โดยตรง"
+
+#: src/ui/viewer/actions.rs:370
+msgid "Preview Failed"
+msgstr "แสดงตัวอย่างไม่สำเร็จ"
+
+#: src/ui/viewer/actions.rs:400
+msgid "Unable to Launch File"
+msgstr "ไม่สามารถเปิดไฟล์ได้"
+
+#: src/ui/viewer/actions.rs:532
+msgid "Copying to Clipboard"
+msgstr "กำลังคัดลอกไปยังคลิปบอร์ด"
+
+#: src/ui/viewer/actions.rs:533
+msgid "Copy Failed"
+msgstr "คัดลอกไม่สำเร็จ"
