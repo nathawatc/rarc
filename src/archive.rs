@@ -86,6 +86,8 @@ pub struct ArchiveEntry {
     pub compressed_size: Option<u64>,
     pub kind: EntryKind,
     pub mtime: Option<i64>,
+    pub mode: u32,
+    pub symlink_target: Option<String>,
     pub is_encrypted: bool,
 }
 
@@ -109,6 +111,11 @@ pub struct ArchiveListing {
 pub enum OperationSummary {
     Listed(ArchiveListing),
     Extracted {
+        password: Option<String>,
+    },
+    Tested {
+        entries_checked: usize,
+        bytes_checked: u64,
         password: Option<String>,
     },
     Created(PathBuf),
@@ -512,6 +519,12 @@ pub fn list_archive(
                     None
                 };
                 let is_encrypted = ffi::archive_entry_is_encrypted(entry) != 0;
+                let mode = ffi::archive_entry_perm(entry);
+                let symlink_target = if kind == EntryKind::Symlink {
+                    entry_symlink_string(entry)
+                } else {
+                    None
+                };
 
                 entries.push(ArchiveEntry {
                     path: path_str,
@@ -519,6 +532,8 @@ pub fn list_archive(
                     compressed_size,
                     kind,
                     mtime,
+                    mode,
+                    symlink_target,
                     is_encrypted,
                 });
             }
@@ -535,6 +550,108 @@ pub fn list_archive(
             is_raw: raw_mode,
         });
     }
+}
+
+/// Verifies archive integrity by reading and decompressing every entry stream in memory.
+pub fn test_archive(
+    archive_path: &Path,
+    initial_password: Option<&str>,
+    event_tx: Option<&Sender<WorkerEvent>>,
+    cancel: &Arc<AtomicBool>,
+) -> Result<(usize, u64, Option<String>), ArchiveError> {
+    let listing = list_archive(archive_path, initial_password, event_tx, cancel)?;
+    let bytes_total: u64 = listing.entries.iter().map(|e| e.size).sum();
+
+    let mut pass_ctx = PassphraseCtx::new(
+        archive_path
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("archive")
+            .to_string(),
+        listing.password.as_deref().or(initial_password),
+        event_tx.cloned(),
+        cancel.clone(),
+    );
+
+    let reader = open_reader(archive_path, listing.is_raw, &mut pass_ctx)?;
+    let mut entries_checked = 0usize;
+    let mut bytes_done = 0u64;
+
+    unsafe {
+        let mut entry: *mut ffi::archive_entry = ptr::null_mut();
+        loop {
+            if cancel.load(Ordering::Relaxed) {
+                return Err(ArchiveError::Cancelled);
+            }
+            let rc = ffi::archive_read_next_header(reader.as_ptr(), &mut entry);
+            if rc == ffi::ARCHIVE_EOF {
+                break;
+            }
+            if rc != ffi::ARCHIVE_OK && rc != ffi::ARCHIVE_WARN {
+                return Err(reader_error(reader.as_ptr(), &pass_ctx));
+            }
+
+            let raw_name = entry_pathname_string(entry)?;
+            let Some(sanitized) = sanitize_entry_path(&raw_name)? else {
+                continue;
+            };
+            let label = if listing.is_raw && path_to_slash_string(&sanitized) == "data" {
+                archive_stem(archive_path)
+            } else {
+                path_to_slash_string(&sanitized)
+            };
+
+            let filetype = ffi::archive_entry_filetype(entry);
+            let is_dir = (filetype & ffi::AE_IFMT) == ffi::AE_IFDIR;
+            if (filetype & ffi::AE_IFMT) == ffi::AE_IFLNK
+                && let Some(sym) = entry_symlink_string(entry)
+            {
+                validate_symlink_target(&sanitized, &sym)?;
+            }
+
+            if let Some(tx) = event_tx {
+                let _ = tx.try_send(WorkerEvent::Progress {
+                    current_file: label.clone(),
+                    bytes_done,
+                    bytes_total,
+                });
+            }
+
+            if !is_dir {
+                let mut buffer: *const c_void = ptr::null();
+                let mut size: usize = 0;
+                let mut offset: i64 = 0;
+                loop {
+                    if cancel.load(Ordering::Relaxed) {
+                        return Err(ArchiveError::Cancelled);
+                    }
+                    let drc = ffi::archive_read_data_block(
+                        reader.as_ptr(),
+                        &mut buffer,
+                        &mut size,
+                        &mut offset,
+                    );
+                    if drc == ffi::ARCHIVE_EOF {
+                        break;
+                    }
+                    if drc != ffi::ARCHIVE_OK && drc != ffi::ARCHIVE_WARN {
+                        return Err(reader_error(reader.as_ptr(), &pass_ctx));
+                    }
+                    bytes_done += size as u64;
+                    if let Some(tx) = event_tx {
+                        let _ = tx.try_send(WorkerEvent::Progress {
+                            current_file: label.clone(),
+                            bytes_done,
+                            bytes_total,
+                        });
+                    }
+                }
+            }
+            entries_checked += 1;
+        }
+    }
+
+    Ok((entries_checked, bytes_done, pass_ctx.last_password()))
 }
 
 /// Extracts all or selected entries from `archive_path` into `dest_dir`.
@@ -1825,6 +1942,7 @@ mod ffi {
         pub fn archive_entry_symlink_utf8(entry: *mut archive_entry) -> *const c_char;
         pub fn archive_entry_set_symlink(entry: *mut archive_entry, link: *const c_char);
         pub fn archive_entry_filetype(entry: *mut archive_entry) -> c_uint;
+        pub fn archive_entry_perm(entry: *mut archive_entry) -> c_uint;
         pub fn archive_entry_set_filetype(entry: *mut archive_entry, filetype: c_uint);
         pub fn archive_entry_set_perm(entry: *mut archive_entry, perm: c_uint);
         pub fn archive_entry_size(entry: *mut archive_entry) -> i64;
@@ -1898,25 +2016,24 @@ mod tests {
         assert!(validate_symlink_target(Path::new("link"), "/etc/passwd").is_err());
     }
 
+    fn dummy_entry(path: &str, kind: EntryKind) -> ArchiveEntry {
+        ArchiveEntry {
+            path: path.into(),
+            size: 10,
+            compressed_size: None,
+            kind,
+            mtime: None,
+            mode: 0o644,
+            symlink_target: None,
+            is_encrypted: false,
+        }
+    }
+
     #[test]
     fn smart_root_folder_detection() {
         let single_dir_entries = vec![
-            ArchiveEntry {
-                path: "proj".into(),
-                size: 0,
-                compressed_size: None,
-                kind: EntryKind::Directory,
-                mtime: None,
-                is_encrypted: false,
-            },
-            ArchiveEntry {
-                path: "proj/main.rs".into(),
-                size: 10,
-                compressed_size: None,
-                kind: EntryKind::File,
-                mtime: None,
-                is_encrypted: false,
-            },
+            dummy_entry("proj", EntryKind::Directory),
+            dummy_entry("proj/main.rs", EntryKind::File),
         ];
         assert_eq!(
             resolve_extract_here_dir(&single_dir_entries, Path::new("/tmp/proj.tar.zst")),
@@ -1924,22 +2041,8 @@ mod tests {
         );
 
         let multi_root = vec![
-            ArchiveEntry {
-                path: "a.txt".into(),
-                size: 5,
-                compressed_size: None,
-                kind: EntryKind::File,
-                mtime: None,
-                is_encrypted: false,
-            },
-            ArchiveEntry {
-                path: "b.txt".into(),
-                size: 5,
-                compressed_size: None,
-                kind: EntryKind::File,
-                mtime: None,
-                is_encrypted: false,
-            },
+            dummy_entry("a.txt", EntryKind::File),
+            dummy_entry("b.txt", EntryKind::File),
         ];
         assert_eq!(
             resolve_extract_here_dir(&multi_root, Path::new("/tmp/bundle.tar.xz")),
@@ -2143,5 +2246,30 @@ mod tests {
         let res = extract_archive(&evil_zip, &dest, None, None, None, None, &cancel);
         assert!(matches!(res, Err(ArchiveError::UnsafePath(_))));
         assert!(!tmp.0.join("escaped.txt").exists());
+    }
+
+    #[test]
+    fn test_integrity_passes_and_detects_corruption() {
+        let tmp = TestDir::new("integrity");
+        let input = tmp.0.join("payload.txt");
+        let content: Vec<u8> = (0..4096).map(|i| ((i * 73 + 19) % 251) as u8).collect();
+        fs::write(&input, &content).unwrap();
+
+        let cancel = Arc::new(AtomicBool::new(false));
+        let zip_path = tmp.0.join("valid.zip");
+        create_archive(&zip_path, ArchiveFormat::Zip, &[input], None, None, &cancel).unwrap();
+
+        let (entries, bytes, _) = test_archive(&zip_path, None, None, &cancel).unwrap();
+        assert_eq!(entries, 1);
+        assert_eq!(bytes, 4096);
+
+        // Flip bytes inside the compressed stream and verify test_archive detects CRC/stream error.
+        let mut raw = fs::read(&zip_path).unwrap();
+        let mid = raw.len() / 2;
+        raw[mid] ^= 0xff;
+        raw[mid + 1] ^= 0xff;
+        let corrupt_zip = tmp.0.join("corrupt.zip");
+        fs::write(&corrupt_zip, raw).unwrap();
+        assert!(test_archive(&corrupt_zip, None, None, &cancel).is_err());
     }
 }
