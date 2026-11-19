@@ -1,9 +1,10 @@
 use std::fs;
 use std::os::raw::c_void;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::ptr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use async_channel::Sender;
 
@@ -15,18 +16,36 @@ use super::ffi::{
 };
 use super::formats::archive_stem;
 use super::{
-    apply_strip_prefix, matches_selection, path_to_slash_string, sanitize_entry_path,
+    apply_strip_prefix, matches_selection, sanitize_entry_path, sanitize_entry_path_str,
     sanitize_single_filename, validate_symlink_target, ArchiveEntry, ArchiveError, ArchiveListing,
     ConflictAction, ConflictPolicy, ConflictResolution, EntryKind, ExtractSession, WorkerEvent,
 };
 
-pub(super) fn send_progress(
-    event_tx: Option<&Sender<WorkerEvent>>,
-    label: &str,
-    bytes_done: u64,
-    bytes_total: u64,
-) {
-    if let Some(tx) = event_tx {
+const PROGRESS_INTERVAL: Duration = Duration::from_millis(50);
+
+#[derive(Default)]
+pub(super) struct ProgressThrottle {
+    last_sent: Option<Instant>,
+}
+
+impl ProgressThrottle {
+    pub(super) fn send(
+        &mut self,
+        event_tx: Option<&Sender<WorkerEvent>>,
+        label: &str,
+        bytes_done: u64,
+        bytes_total: u64,
+    ) {
+        let Some(tx) = event_tx else {
+            return;
+        };
+        let now = Instant::now();
+        if let Some(last) = self.last_sent
+            && now.duration_since(last) < PROGRESS_INTERVAL
+        {
+            return;
+        }
+        self.last_sent = Some(now);
         let _ = tx.try_send(WorkerEvent::Progress {
             current_file: label.to_string(),
             bytes_done,
@@ -50,6 +69,7 @@ pub(super) unsafe fn pump_archive_data(
     bytes_total: u64,
     label: &str,
     event_tx: Option<&Sender<WorkerEvent>>,
+    progress: &mut ProgressThrottle,
     cancel: &Arc<AtomicBool>,
 ) -> Result<(), ArchiveError> {
     let mut buffer: *const c_void = ptr::null();
@@ -95,12 +115,11 @@ pub(super) unsafe fn pump_archive_data(
         }
 
         *bytes_done += size as u64;
-        send_progress(event_tx, label, *bytes_done, bytes_total);
+        progress.send(event_tx, label, *bytes_done, bytes_total);
     }
 }
 
-fn resolve_raw_entry_path(raw_mode: bool, sanitized: &Path, archive_path: &Path) -> String {
-    let rel = path_to_slash_string(sanitized);
+fn resolve_raw_entry_path(raw_mode: bool, rel: String, archive_path: &Path) -> String {
     if raw_mode && rel == "data" {
         archive_stem(archive_path)
     } else {
@@ -161,10 +180,10 @@ pub fn list_archive(
                 first = false;
 
                 let raw_name = entry_pathname_string(entry)?;
-                let Some(rel_path) = sanitize_entry_path(&raw_name)? else {
+                let Some(rel_path) = sanitize_entry_path_str(&raw_name)? else {
                     continue;
                 };
-                let path_str = resolve_raw_entry_path(raw_mode, &rel_path, archive_path);
+                let path_str = resolve_raw_entry_path(raw_mode, rel_path, archive_path);
 
                 let filetype = ffi::raw::archive_entry_filetype(entry);
                 let kind = filetype_to_kind(filetype);
@@ -245,6 +264,7 @@ pub fn test_archive(
         let mut bytes_done = 0u64;
         let mut first = true;
         let mut needs_raw_retry = false;
+        let mut progress = ProgressThrottle::default();
 
         unsafe {
             loop {
@@ -268,20 +288,20 @@ pub fn test_archive(
                 first = false;
 
                 let raw_name = entry_pathname_string(entry)?;
-                let Some(sanitized) = sanitize_entry_path(&raw_name)? else {
+                let Some(sanitized) = sanitize_entry_path_str(&raw_name)? else {
                     continue;
                 };
-                let label = resolve_raw_entry_path(raw_mode, &sanitized, archive_path);
+                let label = resolve_raw_entry_path(raw_mode, sanitized, archive_path);
 
                 let filetype = ffi::raw::archive_entry_filetype(entry);
                 let is_dir = (filetype & ffi::raw::AE_IFMT) == ffi::raw::AE_IFDIR;
                 if (filetype & ffi::raw::AE_IFMT) == ffi::raw::AE_IFLNK
                     && let Some(sym) = entry_symlink_string(entry)
                 {
-                    validate_symlink_target(&sanitized, &sym)?;
+                    validate_symlink_target(Path::new(&label), &sym)?;
                 }
 
-                send_progress(event_tx, &label, bytes_done, bytes_total);
+                progress.send(event_tx, &label, bytes_done, bytes_total);
                 if !is_dir {
                     pump_archive_data(
                         reader.as_ptr(),
@@ -291,6 +311,7 @@ pub fn test_archive(
                         bytes_total,
                         &label,
                         event_tx,
+                        &mut progress,
                         cancel,
                     )?;
                 }
@@ -368,6 +389,7 @@ pub fn extract_archive_with_session(
         let disk_writer = WriteDiskArchive::new()?;
         let mut first = true;
         let mut needs_raw_retry = false;
+        let mut progress = ProgressThrottle::default();
 
         unsafe {
             loop {
@@ -391,10 +413,10 @@ pub fn extract_archive_with_session(
                 first = false;
 
                 let raw_name = entry_pathname_string(entry)?;
-                let Some(sanitized) = sanitize_entry_path(&raw_name)? else {
+                let Some(sanitized) = sanitize_entry_path_str(&raw_name)? else {
                     continue;
                 };
-                let archive_rel_str = resolve_raw_entry_path(raw_mode, &sanitized, archive_path);
+                let archive_rel_str = resolve_raw_entry_path(raw_mode, sanitized, archive_path);
 
                 if !matches_selection(&archive_rel_str, selected_prefixes) {
                     let _ = ffi::raw::archive_read_data_skip(reader.as_ptr());
@@ -447,7 +469,7 @@ pub fn extract_archive_with_session(
                     continue;
                 }
 
-                send_progress(
+                progress.send(
                     event_tx,
                     &archive_rel_str,
                     session.bytes_done,
@@ -458,13 +480,12 @@ pub fn extract_archive_with_session(
                 ffi::raw::archive_entry_set_pathname(entry, target_cstr.as_ptr());
 
                 if let Some(hl_str) = entry_hardlink_string(entry) {
-                    let Some(safe_hl) = sanitize_entry_path(&hl_str)? else {
+                    let Some(hl_rel) = sanitize_entry_path_str(&hl_str)? else {
                         return Err(ArchiveError::UnsafePath(hl_str));
                     };
-                    let hl_rel = path_to_slash_string(&safe_hl);
                     let stripped_hl = apply_strip_prefix(&hl_rel, strip_prefix)
                         .and_then(|s| sanitize_entry_path(&s).ok().flatten())
-                        .unwrap_or(safe_hl);
+                        .unwrap_or_else(|| PathBuf::from(hl_rel));
                     let hl_dest = dest_dir.join(stripped_hl);
                     let hl_cstr = path_to_cstring(&hl_dest)?;
                     ffi::raw::archive_entry_set_hardlink(entry, hl_cstr.as_ptr());
@@ -486,6 +507,7 @@ pub fn extract_archive_with_session(
                         session.bytes_total,
                         &archive_rel_str,
                         event_tx,
+                        &mut progress,
                         cancel,
                     )?;
                 }

@@ -15,8 +15,8 @@ use super::ffi::{
     path_to_cstring, reader_error, to_cstring, OwnedEntry, PassphraseCtx, WriteArchive,
 };
 use super::formats::{infer_writable_from_extension, WritableSpec};
-use super::read::{list_archive, pump_archive_data, send_progress, DataSink};
-use super::{path_to_slash_string, sanitize_entry_path, ArchiveError, ArchiveFormat, EntryKind, WorkerEvent};
+use super::read::{list_archive, pump_archive_data, DataSink, ProgressThrottle};
+use super::{sanitize_entry_path_str, ArchiveError, ArchiveFormat, EntryKind, WorkerEvent};
 
 /// Creates a new archive at `output_path` from `inputs`.
 pub fn create_archive(
@@ -52,6 +52,7 @@ pub fn create_archive(
 
     let mut bytes_done = 0u64;
     let mut written_count = 0usize;
+    let mut progress = ProgressThrottle::default();
     let res = (|| -> Result<(), ArchiveError> {
         for item in &disk_items {
             if cancel.load(Ordering::Relaxed) {
@@ -63,6 +64,7 @@ pub fn create_archive(
                 &mut bytes_done,
                 bytes_total,
                 event_tx,
+                &mut progress,
                 cancel,
             )?;
             written_count += 1;
@@ -130,6 +132,7 @@ pub fn add_to_archive(
     let writer = WriteArchive::new()?;
     let mut writer_opened = false;
     let mut bytes_done = 0u64;
+    let mut progress = ProgressThrottle::default();
 
     let res = (|| -> Result<(), ArchiveError> {
         unsafe {
@@ -175,16 +178,15 @@ pub fn add_to_archive(
                 }
 
                 let raw_name = entry_pathname_string(entry)?;
-                let Some(sanitized) = sanitize_entry_path(&raw_name)? else {
+                let Some(rel) = sanitize_entry_path_str(&raw_name)? else {
                     continue;
                 };
-                let rel = path_to_slash_string(&sanitized);
                 if replace_set.contains(&rel) {
                     let _ = ffi::raw::archive_read_data_skip(reader.as_ptr());
                     continue;
                 }
 
-                send_progress(event_tx, &rel, bytes_done, bytes_total);
+                progress.send(event_tx, &rel, bytes_done, bytes_total);
                 check_read_write(
                     ffi::raw::archive_write_header(writer.as_ptr(), entry),
                     writer.as_ptr(),
@@ -199,6 +201,7 @@ pub fn add_to_archive(
                         bytes_total,
                         &rel,
                         event_tx,
+                        &mut progress,
                         cancel,
                     )?;
                 }
@@ -219,6 +222,7 @@ pub fn add_to_archive(
                 &mut bytes_done,
                 bytes_total,
                 event_tx,
+                &mut progress,
                 cancel,
             )?;
         }
@@ -402,9 +406,10 @@ fn write_disk_item(
     bytes_done: &mut u64,
     bytes_total: u64,
     event_tx: Option<&Sender<WorkerEvent>>,
+    progress: &mut ProgressThrottle,
     cancel: &Arc<AtomicBool>,
 ) -> Result<(), ArchiveError> {
-    send_progress(event_tx, &item.archive_path, *bytes_done, bytes_total);
+    progress.send(event_tx, &item.archive_path, *bytes_done, bytes_total);
 
     let entry = OwnedEntry::new()?;
     let c_path = to_cstring(&item.archive_path)?;
@@ -458,7 +463,7 @@ fn write_disk_item(
                         return Err(ArchiveError::LibArchive(archive_err_string(writer)));
                     }
                     *bytes_done += n as u64;
-                    send_progress(event_tx, &item.archive_path, *bytes_done, bytes_total);
+                    progress.send(event_tx, &item.archive_path, *bytes_done, bytes_total);
                 }
             }
         }

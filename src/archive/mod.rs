@@ -5,6 +5,7 @@ mod read;
 mod tests;
 mod write;
 
+use std::borrow::Cow;
 use std::collections::HashSet;
 use std::path::{Component, Path, PathBuf};
 
@@ -68,16 +69,20 @@ pub enum EntryKind {
 }
 
 impl EntryKind {
-    pub fn label(self, name: &str) -> String {
+    pub fn label_cow(self, name: &str) -> Cow<'static, str> {
         match self {
-            EntryKind::Directory => "Folder".to_string(),
-            EntryKind::Symlink => "Symbolic Link".to_string(),
-            EntryKind::Other => "Special".to_string(),
+            EntryKind::Directory => Cow::Borrowed("Folder"),
+            EntryKind::Symlink => Cow::Borrowed("Symbolic Link"),
+            EntryKind::Other => Cow::Borrowed("Special"),
             EntryKind::File => match Path::new(name).extension().and_then(|e| e.to_str()) {
-                Some(ext) if !ext.is_empty() => format!("{} File", ext.to_ascii_uppercase()),
-                _ => "File".to_string(),
+                Some(ext) if !ext.is_empty() => Cow::Owned(format!("{} File", ext.to_ascii_uppercase())),
+                _ => Cow::Borrowed("File"),
             },
         }
+    }
+
+    pub fn label(self, name: &str) -> String {
+        self.label_cow(name).into_owned()
     }
 }
 
@@ -212,12 +217,12 @@ enum ConflictAction {
     Rename(String),
 }
 
-/// Validates and normalizes an archive entry path to prevent Zip Slip traversal.
+/// Validates and normalizes an archive entry path to a `/`-separated string in a single pass.
 ///
 /// Returns `Ok(None)` when the entry refers strictly to the archive root itself (`.`, `./`, `/`),
 /// `Ok(Some(relative))` for a safe non-empty relative path, or `Err(ArchiveError::UnsafePath)`
 /// if the path contains NUL bytes, empty/invalid syntax, or any `..` traversal component.
-pub fn sanitize_entry_path(raw: &str) -> Result<Option<PathBuf>, ArchiveError> {
+pub fn sanitize_entry_path_str(raw: &str) -> Result<Option<String>, ArchiveError> {
     if raw.is_empty() {
         return Ok(None);
     }
@@ -226,20 +231,25 @@ pub fn sanitize_entry_path(raw: &str) -> Result<Option<PathBuf>, ArchiveError> {
     }
 
     // Reject Windows-style backslash traversal as well as POSIX `..` segments.
-    let mut normalized = PathBuf::new();
+    let mut normalized = String::with_capacity(raw.len());
     for seg in raw.split(['/', '\\']) {
         match seg {
             "" | "." => continue,
             ".." => return Err(ArchiveError::UnsafePath(raw.to_string())),
-            part => normalized.push(part),
+            part => {
+                if !normalized.is_empty() {
+                    normalized.push('/');
+                }
+                normalized.push_str(part);
+            }
         }
     }
 
-    if normalized.as_os_str().is_empty() {
+    if normalized.is_empty() {
         return Ok(None);
     }
 
-    for comp in normalized.components() {
+    for comp in Path::new(&normalized).components() {
         match comp {
             Component::Normal(_) => {}
             _ => return Err(ArchiveError::UnsafePath(raw.to_string())),
@@ -247,6 +257,11 @@ pub fn sanitize_entry_path(raw: &str) -> Result<Option<PathBuf>, ArchiveError> {
     }
 
     Ok(Some(normalized))
+}
+
+/// Validates and normalizes an archive entry path to a relative `PathBuf`.
+pub fn sanitize_entry_path(raw: &str) -> Result<Option<PathBuf>, ArchiveError> {
+    sanitize_entry_path_str(raw).map(|opt| opt.map(PathBuf::from))
 }
 
 /// Validates that a symlink target stored at `entry_rel` stays within the extraction root.
@@ -276,16 +291,6 @@ fn validate_symlink_target(entry_rel: &Path, target: &str) -> Result<(), Archive
         }
     }
     Ok(())
-}
-
-fn path_to_slash_string(path: &Path) -> String {
-    path.components()
-        .filter_map(|c| match c {
-            Component::Normal(s) => Some(s.to_string_lossy().into_owned()),
-            _ => None,
-        })
-        .collect::<Vec<_>>()
-        .join("/")
 }
 
 fn sanitize_single_filename(name: &str) -> Result<String, ArchiveError> {

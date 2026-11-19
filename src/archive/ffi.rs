@@ -184,7 +184,7 @@ pub(super) fn open_reader_step(
             ),
             reader.as_ptr(),
         )?;
-        let open_rc = raw::archive_read_open_filename(reader.as_ptr(), c_path.as_ptr(), 16384);
+        let open_rc = raw::archive_read_open_filename(reader.as_ptr(), c_path.as_ptr(), 65536);
         if open_rc != raw::ARCHIVE_OK && open_rc != raw::ARCHIVE_WARN {
             let err = reader_error(reader.as_ptr(), pass_ctx);
             if allow_raw_retry

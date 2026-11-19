@@ -57,6 +57,15 @@ fn zip_slip_sanitization() {
         sanitize_entry_path("/var/tmp/./hello.txt").unwrap(),
         Some(PathBuf::from("var/tmp/hello.txt"))
     );
+    assert_eq!(
+        sanitize_entry_path_str("/var/tmp\\./hello.txt").unwrap(),
+        Some("var/tmp/hello.txt".to_string())
+    );
+    assert_eq!(sanitize_entry_path_str("./").unwrap(), None);
+    assert!(matches!(
+        sanitize_entry_path_str("a/../evil"),
+        Err(ArchiveError::UnsafePath(_))
+    ));
 }
 
 #[test]
