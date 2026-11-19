@@ -301,7 +301,7 @@ fn validate_symlink_target(entry_rel: &Path, target: &str) -> Result<(), Archive
     Ok(())
 }
 
-fn sanitize_single_filename(name: &str) -> Result<String, ArchiveError> {
+pub fn sanitize_single_filename(name: &str) -> Result<String, ArchiveError> {
     let trimmed = name.trim();
     if trimmed.is_empty()
         || trimmed == "."

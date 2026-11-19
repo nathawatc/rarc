@@ -9,7 +9,9 @@ use gtk::gio;
 use gtk::glib;
 use gtk::prelude::*;
 
-use crate::archive::{create_archive, ArchiveError, ArchiveFormat, OperationSummary};
+use crate::archive::{
+    create_archive, sanitize_single_filename, ArchiveError, ArchiveFormat, OperationSummary,
+};
 use crate::ui::{select_folder_dialog, show_message_dialog};
 
 use super::run_worker_with_progress;
@@ -262,15 +264,14 @@ pub fn show_create_dialog<F>(
         let completed_ref = completed.clone();
         let cb = on_created_rc.clone();
         create_btn.connect_clicked(move |_| {
-            let raw_name = name_entry.text().trim().to_string();
-            if raw_name.is_empty() || raw_name.contains(['/', '\\', '\0']) {
+            let Ok(raw_name) = sanitize_single_filename(&name_entry.text()) else {
                 show_message_dialog(
                     Some(&win_ref),
                     "Invalid Archive Name",
                     "Please enter a valid filename without path separators.",
                 );
                 return;
-            }
+            };
             let fmt = ArchiveFormat::ALL
                 .get(fmt_dropdown.selected() as usize)
                 .copied()

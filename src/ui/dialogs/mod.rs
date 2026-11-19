@@ -12,7 +12,9 @@ use gtk4 as gtk;
 use gtk::glib;
 use gtk::prelude::*;
 
-use crate::archive::{ArchiveError, ConflictResolution, OperationSummary, WorkerEvent};
+use crate::archive::{
+    sanitize_single_filename, ArchiveError, ConflictResolution, OperationSummary, WorkerEvent,
+};
 
 pub use create::show_create_dialog;
 pub use properties::{show_properties_dialog, ArchivePropertiesInfo};
@@ -294,18 +296,14 @@ async fn prompt_conflict_async(
         let send_rename = send_once.clone();
         let entry_ref = rename_entry.clone();
         rename_btn.connect_clicked(move |_| {
-            let name = entry_ref.text().trim().to_string();
-            if !name.is_empty() && name != "." && name != ".." && !name.contains(['/', '\\']) {
+            if let Ok(name) = sanitize_single_filename(&entry_ref.text()) {
                 send_rename(Some(ConflictResolution::Rename(name)));
             }
         });
 
         let btn_ref = rename_btn.clone();
         rename_entry.connect_changed(move |e| {
-            let txt = e.text();
-            let t = txt.trim();
-            let valid = !t.is_empty() && t != "." && t != ".." && !t.contains(['/', '\\']);
-            btn_ref.set_sensitive(valid);
+            btn_ref.set_sensitive(sanitize_single_filename(&e.text()).is_ok());
         });
     })
     .await
