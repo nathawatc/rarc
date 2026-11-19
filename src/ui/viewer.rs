@@ -1783,21 +1783,6 @@ fn append_columns(view: &gtk::ColumnView, on_right_click: &CellRightClickFn) {
     );
     view.append_column(&size_col);
 
-    // Compressed Size
-    let comp_col = make_text_column(
-        "Compressed Size",
-        1.0,
-        true,
-        130,
-        on_right_click.clone(),
-        |d| match d.compressed_size {
-            Some(sz) if !d.is_dir => format_size(sz),
-            _ => "—".to_string(),
-        },
-        |da, db| da.compressed_size.cmp(&db.compressed_size),
-    );
-    view.append_column(&comp_col);
-
     // Type
     let type_col = make_text_column(
         "Type",
