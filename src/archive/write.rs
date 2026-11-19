@@ -81,8 +81,7 @@ pub fn create_archive(
         return Err(err);
     }
 
-    writer.close()?;
-    fs::rename(&tmp_path, output_path)?;
+    finish_temp_archive(writer, &tmp_path, output_path)?;
     Ok(written_count)
 }
 
@@ -243,8 +242,7 @@ pub fn add_to_archive(
         return Err(err);
     }
 
-    writer.close()?;
-    fs::rename(&tmp_path, archive_path)?;
+    finish_temp_archive(writer, &tmp_path, archive_path)?;
     Ok((disk_items.len(), pass_ctx.last_password().or(effective_pw)))
 }
 
@@ -476,6 +474,21 @@ fn write_disk_item(
         check_read_write(ffi::raw::archive_write_finish_entry(writer), writer)?;
     }
 
+    Ok(())
+}
+
+fn finish_temp_archive(
+    writer: WriteArchive,
+    tmp_path: &Path,
+    target_path: &Path,
+) -> Result<(), ArchiveError> {
+    if let Err(err) = writer
+        .close()
+        .and_then(|()| fs::rename(tmp_path, target_path).map_err(ArchiveError::from))
+    {
+        let _ = fs::remove_file(tmp_path);
+        return Err(err);
+    }
     Ok(())
 }
 

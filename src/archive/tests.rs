@@ -703,3 +703,21 @@ fn overwrite_unlinks_readonly_and_hardlinked_targets() {
     assert_eq!(fs::read(&existing).unwrap(), b"fresh");
     assert_eq!(fs::read(&linked_copy).unwrap(), b"original");
 }
+
+#[test]
+fn failed_rename_cleans_up_temp_sibling() {
+    let tmp = TestDir::new("tmp-cleanup");
+    let src = tmp.0.join("a.txt");
+    fs::write(&src, b"data").unwrap();
+    let dir_target = tmp.0.join("existing.zip");
+    fs::create_dir_all(&dir_target).unwrap();
+
+    let cancel = Arc::new(AtomicBool::new(false));
+    assert!(create_archive(&dir_target, ArchiveFormat::Zip, &[src], None, None, &cancel).is_err());
+    let leftovers: Vec<_> = fs::read_dir(&tmp.0)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_name().to_string_lossy().contains(".rarc-tmp-"))
+        .collect();
+    assert!(leftovers.is_empty(), "leftover temp files: {leftovers:?}");
+}
