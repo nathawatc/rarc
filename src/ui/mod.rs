@@ -2,6 +2,7 @@ pub mod dialogs;
 pub mod viewer;
 
 use std::fs;
+use std::os::unix::fs::DirBuilderExt;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -29,7 +30,9 @@ pub fn session_temp_dir() -> std::io::Result<PathBuf> {
     let cell = TEMP_ROOT.get_or_init(|| Mutex::new(None));
     let mut guard = cell.lock().unwrap();
     if let Some(ref dir) = *guard {
-        fs::create_dir_all(dir)?;
+        if !dir.is_dir() {
+            fs::DirBuilder::new().mode(0o700).create(dir)?;
+        }
         return Ok(dir.clone());
     }
     let nanos = SystemTime::now()
@@ -37,7 +40,7 @@ pub fn session_temp_dir() -> std::io::Result<PathBuf> {
         .map(|d| d.as_nanos())
         .unwrap_or(0);
     let dir = std::env::temp_dir().join(format!("rarc-{}-{nanos}", std::process::id()));
-    fs::create_dir_all(&dir)?;
+    fs::DirBuilder::new().mode(0o700).create(&dir)?;
     *guard = Some(dir.clone());
     Ok(dir)
 }
@@ -137,4 +140,19 @@ fn show_message_dialog(parent: Option<&impl IsA<gtk::Window>>, title: &str, deta
     win.set_child(Some(&vbox));
     win.set_default_widget(Some(&ok_btn));
     win.present();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+
+    #[test]
+    fn session_temp_dir_is_owner_only_and_cleans_up() {
+        let dir = session_temp_dir().unwrap();
+        let mode = fs::metadata(&dir).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o700);
+        cleanup_session_temp_dir();
+        assert!(!dir.exists());
+    }
 }
