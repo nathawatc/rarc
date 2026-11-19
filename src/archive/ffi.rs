@@ -367,6 +367,7 @@ impl WriteDiskArchive {
         let writer = Self(ptr);
         let flags = raw::ARCHIVE_EXTRACT_TIME
             | raw::ARCHIVE_EXTRACT_PERM
+            | raw::ARCHIVE_EXTRACT_UNLINK
             | raw::ARCHIVE_EXTRACT_SECURE_SYMLINKS
             | raw::ARCHIVE_EXTRACT_SECURE_NODOTDOT;
         unsafe {
@@ -490,6 +491,7 @@ pub(super) mod raw {
 
     pub const ARCHIVE_EXTRACT_PERM: c_int = 0x0002;
     pub const ARCHIVE_EXTRACT_TIME: c_int = 0x0004;
+    pub const ARCHIVE_EXTRACT_UNLINK: c_int = 0x0010;
     pub const ARCHIVE_EXTRACT_SECURE_SYMLINKS: c_int = 0x0100;
     pub const ARCHIVE_EXTRACT_SECURE_NODOTDOT: c_int = 0x0200;
 

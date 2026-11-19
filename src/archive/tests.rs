@@ -679,3 +679,27 @@ fn raw_gzip_stream_roundtrip() {
     extract_archive(&gz_path, &out_dir, None, None, None, None, &cancel).unwrap();
     assert_eq!(fs::read(out_dir.join("hello.txt")).unwrap(), payload);
 }
+
+#[test]
+fn overwrite_unlinks_readonly_and_hardlinked_targets() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let tmp = TestDir::new("unlink-overwrite");
+    let src = tmp.0.join("file.txt");
+    fs::write(&src, b"fresh").unwrap();
+    let cancel = Arc::new(AtomicBool::new(false));
+    let zip_path = tmp.0.join("fresh.zip");
+    create_archive(&zip_path, ArchiveFormat::Zip, &[src], None, None, &cancel).unwrap();
+
+    let out_dir = tmp.0.join("out");
+    fs::create_dir_all(&out_dir).unwrap();
+    let existing = out_dir.join("file.txt");
+    let linked_copy = tmp.0.join("linked_copy.txt");
+    fs::write(&existing, b"original").unwrap();
+    fs::hard_link(&existing, &linked_copy).unwrap();
+    fs::set_permissions(&existing, fs::Permissions::from_mode(0o444)).unwrap();
+
+    extract_archive(&zip_path, &out_dir, None, None, None, None, &cancel).unwrap();
+    assert_eq!(fs::read(&existing).unwrap(), b"fresh");
+    assert_eq!(fs::read(&linked_copy).unwrap(), b"original");
+}
