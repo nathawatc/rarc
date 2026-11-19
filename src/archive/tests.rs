@@ -154,13 +154,24 @@ fn roundtrip_all_formats_and_add() {
         );
     }
 
-    // Test adding an extra file into .zip via add_to_archive
+    // Test adding an extra file into .zip, .tar.zst, and .7z via add_to_archive
     let extra = tmp.0.join("extra.txt");
     fs::write(&extra, b"dropped file").unwrap();
-    let zip_path = tmp.0.join("test.zip");
-    add_to_archive(&zip_path, &[extra], "sample/sub", None, None, &cancel).unwrap();
-    let listing = list_archive(&zip_path, None, None, &cancel).unwrap();
-    assert!(listing.entries.iter().any(|e| e.path == "sample/sub/extra.txt"));
+    for ext in [".zip", ".tar.zst", ".7z"] {
+        let archive_path = tmp.0.join(format!("test{ext}"));
+        add_to_archive(
+            &archive_path,
+            std::slice::from_ref(&extra),
+            "sample/sub",
+            None,
+            None,
+            &cancel,
+        )
+        .unwrap();
+        let listing = list_archive(&archive_path, None, None, &cancel).unwrap();
+        assert!(listing.entries.iter().any(|e| e.path == "sample/hello.txt"));
+        assert!(listing.entries.iter().any(|e| e.path == "sample/sub/extra.txt"));
+    }
 }
 
 #[test]
