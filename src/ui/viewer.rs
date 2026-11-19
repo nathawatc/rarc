@@ -306,7 +306,7 @@ type NavSlot = Rc<RefCell<Option<NavFn>>>;
 pub fn launch_standalone(app: &gtk::Application, initial_archive: Option<PathBuf>) {
     let window = gtk::ApplicationWindow::builder()
         .application(app)
-        .title("rarc — Archive Manager")
+        .title("rarc")
         .default_width(980)
         .default_height(620)
         .build();
@@ -348,6 +348,8 @@ pub fn launch_standalone(app: &gtk::Application, initial_archive: Option<PathBuf
     header.pack_start(&extract_btn);
     header.pack_start(&test_btn);
     header.pack_end(&search_entry);
+    // Keep title out of HeaderBar so it does not duplicate the window title bar.
+    header.set_title_widget(Some(&gtk::Box::new(gtk::Orientation::Horizontal, 0)));
     window.set_titlebar(Some(&header));
 
     // Breadcrumb / navigation bar
@@ -772,7 +774,7 @@ pub fn launch_standalone(app: &gtk::Application, initial_archive: Option<PathBuf
                             st.current_dir.clone()
                         };
 
-                        win_done.set_title(Some(&format!("{archive_name} — rarc")));
+                        win_done.set_title(Some(&format!("{archive_name} - rarc")));
                         extract_done.set_sensitive(true);
                         test_done.set_sensitive(true);
                         stack_done.set_visible_child_name("list");
