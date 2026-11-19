@@ -229,3 +229,69 @@ where
         .resizable(true)
         .build()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::rc::Rc;
+    use std::time::{Duration, Instant};
+
+    #[test]
+    #[ignore = "requires graphical display (run with: cargo test -- --ignored --test-threads=1)"]
+    fn column_view_pick_row_pos_and_lazy_lock_icon() {
+        gtk::init().expect("GTK init");
+
+        let store = gio::ListStore::new::<ArchiveRowObject>();
+        store.append(&ArchiveRowObject::new(Rc::new(ArchiveEntry {
+            path: "plain.txt".to_string(),
+            size: 12,
+            kind: EntryKind::File,
+            is_encrypted: false,
+            ..Default::default()
+        })));
+        store.append(&ArchiveRowObject::new(Rc::new(ArchiveEntry {
+            path: "secret.txt".to_string(),
+            size: 34,
+            kind: EntryKind::File,
+            is_encrypted: true,
+            ..Default::default()
+        })));
+
+        let selection = gtk::MultiSelection::new(Some(store));
+        let view = gtk::ColumnView::new(Some(selection));
+        append_columns(&view);
+
+        let win = gtk::Window::builder()
+            .default_width(600)
+            .default_height(300)
+            .child(&view)
+            .build();
+        win.present();
+
+        let ctx = gtk::glib::MainContext::default();
+        let deadline = Instant::now() + Duration::from_millis(400);
+        while Instant::now() < deadline {
+            while ctx.iteration(false) {}
+            std::thread::sleep(Duration::from_millis(10));
+        }
+
+        // Empty whitespace near the bottom of the 300px window must pick None.
+        assert_eq!(pick_row_pos(&view, 40.0, 260.0), None);
+
+        // Scan vertically from below header to find at least one bound row via pick_row_pos.
+        let mut found_positions = Vec::new();
+        for y in (36..140).step_by(6) {
+            if let Some(pos) = pick_row_pos(&view, 40.0, y as f64)
+                && !found_positions.contains(&pos)
+            {
+                found_positions.push(pos);
+            }
+        }
+        assert!(
+            found_positions.contains(&0) && found_positions.contains(&1),
+            "expected pick_row_pos to hit rows 0 and 1, got {found_positions:?}"
+        );
+
+        win.destroy();
+    }
+}
