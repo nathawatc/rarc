@@ -177,136 +177,135 @@ pub(super) fn install_context_actions(
     }
 }
 
-pub(super) fn install_dnd(
+pub(super) fn install_drop_in(
     window: &gtk::ApplicationWindow,
     stack: &gtk::Stack,
+    state: &Rc<RefCell<ViewerState>>,
+    open_archive: &Rc<dyn Fn(PathBuf)>,
+) {
+    let drop_target = gtk::DropTarget::new(gdk::FileList::static_type(), gdk::DragAction::COPY);
+    let stack_enter = stack.clone();
+    drop_target.connect_enter(move |_, _, _| {
+        stack_enter.add_css_class("rarc-drop-active");
+        gdk::DragAction::COPY
+    });
+    let stack_leave = stack.clone();
+    drop_target.connect_leave(move |_| {
+        stack_leave.remove_css_class("rarc-drop-active");
+    });
+
+    let stack_drop = stack.clone();
+    let state_ref = state.clone();
+    let win_ref = window.clone();
+    let open_fn = open_archive.clone();
+    drop_target.connect_drop(move |_, value, _, _| {
+        stack_drop.remove_css_class("rarc-drop-active");
+        let Ok(file_list) = value.get::<gdk::FileList>() else {
+            return false;
+        };
+        let paths: Vec<PathBuf> = file_list
+            .files()
+            .into_iter()
+            .filter_map(|f| f.path())
+            .collect();
+        if paths.is_empty() {
+            return false;
+        }
+
+        let open_archive_path = state_ref.borrow().current_archive.clone();
+        if let Some(arch_path) = open_archive_path {
+            let (dest_subdir, cached_pw) = {
+                let st = state_ref.borrow();
+                (st.current_dir.clone(), st.cached_password.clone())
+            };
+            let arch_worker = arch_path.clone();
+            let reload = open_fn.clone();
+            run_viewer_worker(
+                &win_ref,
+                &state_ref,
+                Some(arch_path),
+                "Adding Files to Archive",
+                "Failed to Add Files",
+                move |tx, cancel| {
+                    let (_, password) = add_to_archive(
+                        &arch_worker,
+                        &paths,
+                        &dest_subdir,
+                        cached_pw.as_deref(),
+                        Some(tx),
+                        cancel,
+                    )?;
+                    Ok(OperationSummary::Added {
+                        path: arch_worker,
+                        password,
+                    })
+                },
+                move |summary| {
+                    if let OperationSummary::Added { path, .. } = summary {
+                        reload(path);
+                    }
+                },
+            );
+            true
+        } else if paths.len() == 1
+            && paths[0].is_file()
+            && is_supported_archive_path(&paths[0])
+        {
+            open_fn(paths[0].clone());
+            true
+        } else {
+            let open_after = open_fn.clone();
+            show_create_dialog(
+                None,
+                Some(win_ref.upcast_ref()),
+                paths,
+                None,
+                move |created| {
+                    if let Some(path) = created {
+                        open_after(path);
+                    }
+                },
+            );
+            true
+        }
+    });
+    stack.add_controller(drop_target);
+}
+
+pub(super) fn install_drag_out(
+    window: &gtk::ApplicationWindow,
     column_view: &gtk::ColumnView,
     state: &Rc<RefCell<ViewerState>>,
     selection: &gtk::MultiSelection,
-    open_archive: &Rc<dyn Fn(PathBuf)>,
 ) {
-    // Drag-and-Drop IN
-    {
-        let drop_target = gtk::DropTarget::new(gdk::FileList::static_type(), gdk::DragAction::COPY);
-        let stack_enter = stack.clone();
-        drop_target.connect_enter(move |_, _, _| {
-            stack_enter.add_css_class("rarc-drop-active");
-            gdk::DragAction::COPY
-        });
-        let stack_leave = stack.clone();
-        drop_target.connect_leave(move |_| {
-            stack_leave.remove_css_class("rarc-drop-active");
-        });
-
-        let stack_drop = stack.clone();
-        let state_ref = state.clone();
-        let win_ref = window.clone();
-        let open_fn = open_archive.clone();
-        drop_target.connect_drop(move |_, value, _, _| {
-            stack_drop.remove_css_class("rarc-drop-active");
-            let Ok(file_list) = value.get::<gdk::FileList>() else {
-                return false;
-            };
-            let paths: Vec<PathBuf> = file_list
-                .files()
-                .into_iter()
-                .filter_map(|f| f.path())
-                .collect();
-            if paths.is_empty() {
-                return false;
-            }
-
-            let open_archive_path = state_ref.borrow().current_archive.clone();
-            if let Some(arch_path) = open_archive_path {
-                let (dest_subdir, cached_pw) = {
-                    let st = state_ref.borrow();
-                    (st.current_dir.clone(), st.cached_password.clone())
-                };
-                let arch_worker = arch_path.clone();
-                let reload = open_fn.clone();
-                run_viewer_worker(
-                    &win_ref,
-                    &state_ref,
-                    Some(arch_path),
-                    "Adding Files to Archive",
-                    "Failed to Add Files",
-                    move |tx, cancel| {
-                        let (_, password) = add_to_archive(
-                            &arch_worker,
-                            &paths,
-                            &dest_subdir,
-                            cached_pw.as_deref(),
-                            Some(tx),
-                            cancel,
-                        )?;
-                        Ok(OperationSummary::Added {
-                            path: arch_worker,
-                            password,
-                        })
-                    },
-                    move |summary| {
-                        if let OperationSummary::Added { path, .. } = summary {
-                            reload(path);
-                        }
-                    },
-                );
-                true
-            } else if paths.len() == 1
-                && paths[0].is_file()
-                && is_supported_archive_path(&paths[0])
-            {
-                open_fn(paths[0].clone());
-                true
-            } else {
-                let open_after = open_fn.clone();
-                show_create_dialog(
-                    None,
-                    Some(win_ref.upcast_ref()),
-                    paths,
-                    None,
-                    move |created| {
-                        if let Some(path) = created {
-                            open_after(path);
-                        }
-                    },
-                );
-                true
-            }
-        });
-        stack.add_controller(drop_target);
-    }
-
-    // Drag-and-Drop OUT
-    {
-        let drag_source = gtk::DragSource::builder()
-            .actions(gdk::DragAction::COPY)
-            .build();
-        let state_ref = state.clone();
-        let selection_ref = selection.clone();
-        let win_ref = window.clone();
-        drag_source.connect_prepare(move |_, _, _| {
-            let st = state_ref.borrow();
-            let arch = st.current_archive.as_ref()?;
-            let selected = collect_selected_paths(&selection_ref);
-            if selected.is_empty() {
-                return None;
-            }
-            let total_bytes = compute_selected_bytes(&st.entries, Some(&selected));
-            let strip = st.active_strip_prefix();
-            let provider = ArchiveDragProvider::new(
-                arch.clone(),
-                selected,
-                strip,
-                st.cached_password.clone(),
-                st.is_raw,
-                total_bytes,
-                Rc::downgrade(&state_ref),
-                win_ref.upcast_ref(),
-            );
-            Some(provider.upcast())
-        });
-        column_view.add_controller(drag_source);
-    }
+    let drag_source = gtk::DragSource::builder()
+        .actions(gdk::DragAction::COPY)
+        .build();
+    let state_ref = state.clone();
+    let selection_ref = selection.clone();
+    let win_ref = window.clone();
+    drag_source.connect_prepare(move |_, _, _| {
+        let st = state_ref.borrow();
+        let arch = st.current_archive.as_ref()?;
+        let selected = collect_selected_paths(&selection_ref);
+        if selected.is_empty() {
+            return None;
+        }
+        let total_bytes = compute_selected_bytes(&st.entries, Some(&selected));
+        let strip = st.active_strip_prefix();
+        let provider = ArchiveDragProvider::new(
+            arch.clone(),
+            selected,
+            strip,
+            st.cached_password.clone(),
+            st.is_raw,
+            total_bytes,
+            Rc::downgrade(&state_ref),
+            win_ref.upcast_ref(),
+        );
+        Some(provider.upcast())
+    });
+    column_view.add_controller(drag_source);
 }
 
 pub(super) fn activate_row(

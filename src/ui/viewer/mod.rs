@@ -3,7 +3,7 @@ mod columns;
 mod models;
 mod tree;
 
-use std::cell::RefCell;
+use std::cell::{OnceCell, RefCell};
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::atomic::AtomicBool;
@@ -21,7 +21,8 @@ use crate::ui::dialogs::{run_worker_with_progress, show_create_dialog, show_prop
 use crate::ui::{format_size, show_error_dialog, show_info_dialog};
 
 use actions::{
-    activate_row, build_context_menu, install_context_actions, install_dnd, start_extract_dialog,
+    activate_row, build_context_menu, install_context_actions, install_drag_out, install_drop_in,
+    start_extract_dialog,
 };
 use columns::{append_columns, pick_row_pos};
 use models::{
@@ -29,6 +30,13 @@ use models::{
     ViewerState,
 };
 use tree::{build_tree_sidebar, install_thumb_buttons, make_navigate_to};
+
+struct ListPage {
+    tree_root_store: gio::ListStore,
+    tree_model: gtk::TreeListModel,
+    selection: gtk::MultiSelection,
+    navigate_to: NavFn,
+}
 
 /// Launches the standalone archive viewer/manager window.
 pub fn launch_standalone(app: &gtk::Application, initial_archive: Option<PathBuf>) {
@@ -107,8 +115,58 @@ pub fn launch_standalone(app: &gtk::Application, initial_archive: Option<PathBuf
     breadcrumb_bar.append(&up_btn);
     breadcrumb_bar.append(&crumbs_scroll);
 
+    let stack = build_empty_stack();
+    let root_box = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    root_box.append(&breadcrumb_bar);
+    root_box.append(&stack);
+    window.set_child(Some(&root_box));
+
+    let list_page: Rc<OnceCell<ListPage>> = Rc::new(OnceCell::new());
+
+    let open_archive = make_open_archive(
+        &window,
+        &state,
+        &list_page,
+        &crumbs_box,
+        &up_btn,
+        &search_entry,
+        &stack,
+        &extract_btn,
+        &test_btn,
+        &props_btn,
+    );
+
+    install_header_actions(
+        &window,
+        &state,
+        &list_page,
+        &open_btn,
+        &new_btn,
+        &extract_btn,
+        &test_btn,
+        &props_btn,
+        &open_archive,
+    );
+
+    install_drop_in(&window, &stack, &state, &open_archive);
+
+    window.present();
+    if let Some(path) = initial_archive {
+        open_archive(path);
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_list_page(
+    window: &gtk::ApplicationWindow,
+    state: &Rc<RefCell<ViewerState>>,
+    crumbs_box: &gtk::Box,
+    up_btn: &gtk::Button,
+    search_entry: &gtk::SearchEntry,
+    stack: &gtk::Stack,
+) -> ListPage {
     let (tree_root_store, tree_model, tree_selection, tree_view, tree_scroll) =
-        build_tree_sidebar(&state);
+        build_tree_sidebar(state);
 
     // ColumnView data pipeline (store holds only the currently visible directory or search results)
     let store = gio::ListStore::new::<ArchiveRowObject>();
@@ -123,7 +181,7 @@ pub fn launch_standalone(app: &gtk::Application, initial_archive: Option<PathBuf
     let selection = gtk::MultiSelection::new(Some(sort_model));
 
     let (act_open, act_open_with, act_extract, act_copy, act_props, show_context_menu) =
-        build_context_menu(&window, &column_view, &selection, &state);
+        build_context_menu(window, &column_view, &selection, state);
 
     append_columns(&column_view);
     column_view.set_model(Some(&selection));
@@ -158,26 +216,21 @@ pub fn launch_standalone(app: &gtk::Application, initial_archive: Option<PathBuf
         .vexpand(true)
         .hexpand(true)
         .build();
-
-    let stack = build_main_stack(&paned);
-    let root_box = gtk::Box::new(gtk::Orientation::Vertical, 0);
-    root_box.append(&breadcrumb_bar);
-    root_box.append(&stack);
-    window.set_child(Some(&root_box));
+    stack.add_named(&paned, Some("list"));
 
     let navigate_to = make_navigate_to(
-        &state,
-        &crumbs_box,
-        &up_btn,
+        state,
+        crumbs_box,
+        up_btn,
         &store,
-        &search_entry,
+        search_entry,
         &selection,
         &tree_view,
         &tree_model,
         &tree_selection,
     );
 
-    install_thumb_buttons(&window, &state, &navigate_to);
+    install_thumb_buttons(window, state, &navigate_to);
 
     // Left tree selection listener
     {
@@ -237,33 +290,9 @@ pub fn launch_standalone(app: &gtk::Application, initial_archive: Option<PathBuf
         });
     }
 
-    let open_archive = make_open_archive(
-        &window,
-        &state,
-        &tree_root_store,
-        &tree_model,
-        &stack,
-        &extract_btn,
-        &test_btn,
-        &props_btn,
-        &navigate_to,
-    );
-
-    install_header_actions(
-        &window,
-        &state,
-        &selection,
-        &open_btn,
-        &new_btn,
-        &extract_btn,
-        &test_btn,
-        &props_btn,
-        &open_archive,
-    );
-
     install_context_actions(
-        &window,
-        &state,
+        window,
+        state,
         &selection,
         &navigate_to,
         &act_open,
@@ -290,11 +319,13 @@ pub fn launch_standalone(app: &gtk::Application, initial_archive: Option<PathBuf
         });
     }
 
-    install_dnd(&window, &stack, &column_view, &state, &selection, &open_archive);
+    install_drag_out(window, &column_view, state, &selection);
 
-    window.present();
-    if let Some(path) = initial_archive {
-        open_archive(path);
+    ListPage {
+        tree_root_store,
+        tree_model,
+        selection,
+        navigate_to,
     }
 }
 
@@ -349,7 +380,7 @@ fn run_viewer_worker<FWork, FOk>(
     );
 }
 
-fn build_main_stack(paned: &gtk::Paned) -> gtk::Stack {
+fn build_empty_stack() -> gtk::Stack {
     let empty_box = gtk::Box::new(gtk::Orientation::Vertical, 10);
     empty_box.set_valign(gtk::Align::Center);
     empty_box.set_halign(gtk::Align::Center);
@@ -370,7 +401,6 @@ fn build_main_stack(paned: &gtk::Paned) -> gtk::Stack {
     stack.set_vexpand(true);
     stack.set_hexpand(true);
     stack.add_named(&empty_box, Some("empty"));
-    stack.add_named(paned, Some("list"));
     stack.set_visible_child_name("empty");
     stack
 }
@@ -379,23 +409,25 @@ fn build_main_stack(paned: &gtk::Paned) -> gtk::Stack {
 fn make_open_archive(
     window: &gtk::ApplicationWindow,
     state: &Rc<RefCell<ViewerState>>,
-    tree_root_store: &gio::ListStore,
-    tree_model: &gtk::TreeListModel,
+    list_page: &Rc<OnceCell<ListPage>>,
+    crumbs_box: &gtk::Box,
+    up_btn: &gtk::Button,
+    search_entry: &gtk::SearchEntry,
     stack: &gtk::Stack,
     extract_btn: &gtk::Button,
     test_btn: &gtk::Button,
     props_btn: &gtk::Button,
-    navigate_to: &NavFn,
 ) -> Rc<dyn Fn(PathBuf)> {
     let window_ref = window.clone();
     let state_ref = state.clone();
-    let tree_root_ref = tree_root_store.clone();
-    let tree_model_ref = tree_model.clone();
+    let list_page_ref = list_page.clone();
+    let crumbs_ref = crumbs_box.clone();
+    let up_ref = up_btn.clone();
+    let search_ref = search_entry.clone();
     let stack_ref = stack.clone();
     let extract_ref = extract_btn.clone();
     let test_ref = test_btn.clone();
     let props_ref = props_btn.clone();
-    let nav = navigate_to.clone();
 
     Rc::new(move |archive_path: PathBuf| {
         let initial_pw = {
@@ -418,13 +450,14 @@ fn make_open_archive(
 
         let win_done = window_ref.clone();
         let st_done = state_ref.clone();
-        let tree_root_done = tree_root_ref.clone();
-        let tree_model_done = tree_model_ref.clone();
+        let list_page_done = list_page_ref.clone();
+        let crumbs_done = crumbs_ref.clone();
+        let up_done = up_ref.clone();
+        let search_done = search_ref.clone();
         let stack_done = stack_ref.clone();
         let extract_done = extract_ref.clone();
         let test_done = test_ref.clone();
         let props_done = props_ref.clone();
-        let nav_done = nav.clone();
 
         run_viewer_worker(
             &window_ref,
@@ -474,8 +507,19 @@ fn make_open_archive(
                         (st.current_dir.clone(), mode)
                     };
 
-                    tree_root_done.splice(0, tree_root_done.n_items(), &[root_node]);
-                    if let Some(first_row) = tree_model_done.row(0) {
+                    let lp = list_page_done.get_or_init(|| {
+                        build_list_page(
+                            &win_done,
+                            &st_done,
+                            &crumbs_done,
+                            &up_done,
+                            &search_done,
+                            &stack_done,
+                        )
+                    });
+                    lp.tree_root_store
+                        .splice(0, lp.tree_root_store.n_items(), &[root_node]);
+                    if let Some(first_row) = lp.tree_model.row(0) {
                         first_row.set_expanded(true);
                     }
 
@@ -484,7 +528,7 @@ fn make_open_archive(
                     test_done.set_sensitive(true);
                     props_done.set_sensitive(true);
                     stack_done.set_visible_child_name("list");
-                    nav_done(target_dir, true, nav_mode);
+                    (lp.navigate_to)(target_dir, true, nav_mode);
                     trim_glibc_heap();
                 }
             },
@@ -509,7 +553,7 @@ fn trim_glibc_heap() {
 fn install_header_actions(
     window: &gtk::ApplicationWindow,
     state: &Rc<RefCell<ViewerState>>,
-    selection: &gtk::MultiSelection,
+    list_page: &Rc<OnceCell<ListPage>>,
     open_btn: &gtk::Button,
     new_btn: &gtk::Button,
     extract_btn: &gtk::Button,
@@ -553,9 +597,11 @@ fn install_header_actions(
     {
         let win_ref = window.clone();
         let state_ref = state.clone();
-        let selection_ref = selection.clone();
+        let lp_ref = list_page.clone();
         extract_btn.connect_clicked(move |_| {
-            start_extract_dialog(&win_ref, &state_ref, &selection_ref, false);
+            if let Some(lp) = lp_ref.get() {
+                start_extract_dialog(&win_ref, &state_ref, &lp.selection, false);
+            }
         });
     }
     {
