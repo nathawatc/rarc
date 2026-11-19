@@ -13,7 +13,7 @@ use gtk::prelude::*;
 use crate::archive::{
     create_archive, ArchiveError, ArchiveFormat, ConflictResolution, OperationSummary, WorkerEvent,
 };
-use crate::ui::show_error_dialog;
+use crate::ui::{format_mtime, format_size, show_error_dialog};
 
 /// Runs a worker `Receiver<WorkerEvent>` with a compact progress window and modal prompts.
 pub fn run_worker_with_progress<F>(
@@ -712,4 +712,171 @@ fn build_output_path(dir: &Path, name: &str, fmt: ArchiveFormat) -> PathBuf {
         format!("{name}{ext}")
     };
     dir.join(final_name)
+}
+
+#[derive(Clone, Debug)]
+pub struct PropertyEntry {
+    pub name: String,
+    pub full_path: String,
+    pub type_label: String,
+    pub size: u64,
+    pub compressed_size: Option<u64>,
+    pub mtime: Option<i64>,
+    pub mode: u32,
+    pub symlink_target: Option<String>,
+    pub is_dir: bool,
+    pub is_encrypted: bool,
+}
+
+pub struct ArchivePropertiesInfo {
+    pub archive_path: PathBuf,
+    pub entry_count: usize,
+    pub total_uncompressed: u64,
+    pub encrypted_count: usize,
+}
+
+/// Shows a Properties modal for a single entry, multiple selected entries, or the archive itself.
+pub fn show_properties_dialog(
+    parent: &gtk::Window,
+    selected: &[PropertyEntry],
+    archive_info: &ArchivePropertiesInfo,
+) {
+    let title = match selected.len() {
+        0 => "Archive Properties",
+        1 => "Properties",
+        _ => "Selection Properties",
+    };
+
+    let win = gtk::Window::builder()
+        .title(title)
+        .modal(true)
+        .resizable(false)
+        .transient_for(parent)
+        .default_width(440)
+        .build();
+
+    let vbox = gtk::Box::new(gtk::Orientation::Vertical, 12);
+    vbox.add_css_class("rarc-dialog-body");
+
+    let grid = gtk::Grid::builder()
+        .row_spacing(8)
+        .column_spacing(14)
+        .build();
+
+    let mut rows: Vec<(&str, String)> = Vec::new();
+    match selected {
+        [entry] => {
+            rows.push(("Name", entry.name.clone()));
+            rows.push(("Archive Path", entry.full_path.clone()));
+            rows.push(("Type", entry.type_label.clone()));
+            if !entry.is_dir {
+                rows.push((
+                    "Uncompressed Size",
+                    format!("{} ({} bytes)", format_size(entry.size), entry.size),
+                ));
+                let comp = entry
+                    .compressed_size
+                    .map(|c| format!("{} ({c} bytes)", format_size(c)))
+                    .unwrap_or_else(|| "—".to_string());
+                rows.push(("Compressed Size", comp));
+            }
+            rows.push(("Modified Date", format_mtime(entry.mtime)));
+            rows.push(("Permissions", format_mode(entry.mode, entry.is_dir)));
+            rows.push((
+                "Encrypted",
+                if entry.is_encrypted { "Yes" } else { "No" }.to_string(),
+            ));
+            if let Some(ref target) = entry.symlink_target {
+                rows.push(("Symlink Target", target.clone()));
+            }
+        }
+        [] => {
+            let name = archive_info
+                .archive_path
+                .file_name()
+                .and_then(|s| s.to_str())
+                .unwrap_or("archive")
+                .to_string();
+            let disk_size = std::fs::metadata(&archive_info.archive_path)
+                .map(|m| format!("{} ({} bytes)", format_size(m.len()), m.len()))
+                .unwrap_or_else(|_| "—".to_string());
+            rows.push(("Name", name));
+            rows.push(("Location", archive_info.archive_path.display().to_string()));
+            rows.push(("Archive Size", disk_size));
+            rows.push(("Entries", archive_info.entry_count.to_string()));
+            rows.push((
+                "Uncompressed Size",
+                format!(
+                    "{} ({} bytes)",
+                    format_size(archive_info.total_uncompressed),
+                    archive_info.total_uncompressed
+                ),
+            ));
+            rows.push((
+                "Encrypted Entries",
+                archive_info.encrypted_count.to_string(),
+            ));
+        }
+        many => {
+            let dirs = many.iter().filter(|e| e.is_dir).count();
+            let files = many.len() - dirs;
+            let total: u64 = many.iter().map(|e| e.size).sum();
+            rows.push((
+                "Selected",
+                format!("{} items ({files} files, {dirs} folders)", many.len()),
+            ));
+            rows.push((
+                "Uncompressed Size",
+                format!("{} ({total} bytes)", format_size(total)),
+            ));
+            rows.push((
+                "Encrypted Items",
+                many.iter().filter(|e| e.is_encrypted).count().to_string(),
+            ));
+        }
+    }
+
+    for (idx, (key, val)) in rows.into_iter().enumerate() {
+        let k_lbl = gtk::Label::new(Some(key));
+        k_lbl.set_xalign(1.0);
+        k_lbl.set_valign(gtk::Align::Start);
+        k_lbl.add_css_class("rarc-muted");
+
+        let v_lbl = gtk::Label::new(Some(&val));
+        v_lbl.set_xalign(0.0);
+        v_lbl.set_hexpand(true);
+        v_lbl.set_wrap(true);
+        v_lbl.set_selectable(true);
+
+        grid.attach(&k_lbl, 0, idx as i32, 1, 1);
+        grid.attach(&v_lbl, 1, idx as i32, 1, 1);
+    }
+
+    let close_btn = gtk::Button::with_label("Close");
+    close_btn.set_halign(gtk::Align::End);
+    close_btn.add_css_class("suggested-action");
+    let win_ref = win.clone();
+    close_btn.connect_clicked(move |_| win_ref.close());
+
+    vbox.append(&grid);
+    vbox.append(&close_btn);
+    win.set_child(Some(&vbox));
+    win.set_default_widget(Some(&close_btn));
+    win.present();
+}
+
+fn format_mode(mode: u32, is_dir: bool) -> String {
+    let bits = mode & 0o777;
+    if bits == 0 && mode == 0 {
+        return "—".to_string();
+    }
+    let mut s = String::with_capacity(10);
+    s.push(if is_dir { 'd' } else { '-' });
+    for shift in [6, 3, 0] {
+        let tri = (bits >> shift) & 0o7;
+        s.push(if (tri & 4) != 0 { 'r' } else { '-' });
+        s.push(if (tri & 2) != 0 { 'w' } else { '-' });
+        s.push(if (tri & 1) != 0 { 'x' } else { '-' });
+    }
+    format!("{s} ({bits:04o})")
 }
