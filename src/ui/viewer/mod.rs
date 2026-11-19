@@ -151,6 +151,7 @@ pub fn launch_standalone(app: &gtk::Application, initial_archive: Option<PathBuf
     let list_page: Rc<OnceCell<ListPage>> = Rc::new(OnceCell::new());
     let open_archive = make_open_archive(&widgets, &state, &list_page);
     install_header_actions(&widgets, &state, &list_page, &open_archive);
+    install_search_unfocus(&widgets.window, &widgets.search_entry);
     install_drop_in(&widgets.window, &widgets.stack, &state, &open_archive);
 
     widgets.window.present();
@@ -352,6 +353,37 @@ fn run_viewer_worker<FWork, FOk>(
             }
         },
     );
+}
+
+fn install_search_unfocus(window: &gtk::ApplicationWindow, search_entry: &gtk::SearchEntry) {
+    let win_esc = window.clone();
+    search_entry.connect_stop_search(move |entry| {
+        if !entry.text().is_empty() {
+            entry.set_text("");
+        }
+        gtk::prelude::GtkWindowExt::set_focus(&win_esc, gtk::Widget::NONE);
+    });
+
+    let click = gtk::GestureClick::builder()
+        .button(0)
+        .propagation_phase(gtk::PropagationPhase::Capture)
+        .build();
+    let win_click = window.clone();
+    let search_click = search_entry.clone();
+    click.connect_pressed(move |_, _, x, y| {
+        let search_focused = gtk::prelude::GtkWindowExt::focus(&win_click)
+            .is_some_and(|w| w == search_click || w.is_ancestor(&search_click));
+        if !search_focused {
+            return;
+        }
+        let inside_search = win_click
+            .pick(x, y, gtk::PickFlags::DEFAULT)
+            .is_some_and(|w| w == search_click || w.is_ancestor(&search_click));
+        if !inside_search {
+            gtk::prelude::GtkWindowExt::set_focus(&win_click, gtk::Widget::NONE);
+        }
+    });
+    window.add_controller(click);
 }
 
 fn build_empty_stack() -> gtk::Stack {
