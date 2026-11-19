@@ -31,7 +31,6 @@ pub fn show_properties_dialog(
         .modal(true)
         .resizable(false)
         .transient_for(parent)
-        .default_width(440)
         .build();
 
     let vbox = gtk::Box::new(gtk::Orientation::Vertical, 12);
@@ -153,6 +152,9 @@ pub fn show_properties_dialog(
         v_lbl.set_xalign(0.0);
         v_lbl.set_hexpand(true);
         v_lbl.set_wrap(true);
+        v_lbl.set_wrap_mode(gtk::pango::WrapMode::WordChar);
+        v_lbl.set_width_chars(36);
+        v_lbl.set_max_width_chars(36);
         v_lbl.set_selectable(true);
 
         grid.attach(&k_lbl, 0, idx as i32, 1, 1);

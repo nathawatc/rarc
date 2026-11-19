@@ -100,7 +100,6 @@ pub fn show_message_dialog(parent: Option<&impl IsA<gtk::Window>>, title: &str, 
         .title(title)
         .modal(true)
         .resizable(false)
-        .default_width(380)
         .build();
     if let Some(p) = parent {
         win.set_transient_for(Some(p));
@@ -118,6 +117,9 @@ pub fn show_message_dialog(parent: Option<&impl IsA<gtk::Window>>, title: &str, 
     let body = gtk::Label::new(Some(detail));
     body.set_xalign(0.0);
     body.set_wrap(true);
+    body.set_wrap_mode(gtk::pango::WrapMode::WordChar);
+    body.set_width_chars(44);
+    body.set_max_width_chars(44);
     body.set_selectable(true);
 
     let ok_btn = gtk::Button::with_label("Close");

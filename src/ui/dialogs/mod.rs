@@ -140,7 +140,6 @@ async fn run_modal_prompt<T: 'static>(
     parent: &gtk::Window,
     title: &str,
     spacing: i32,
-    default_width: i32,
     build_ui: impl FnOnce(&gtk::Window, &gtk::Box, &Rc<dyn Fn(Option<T>)>),
 ) -> Option<T> {
     let (tx, rx) = async_channel::bounded(1);
@@ -151,7 +150,6 @@ async fn run_modal_prompt<T: 'static>(
         .modal(true)
         .resizable(false)
         .transient_for(parent)
-        .default_width(default_width)
         .build();
 
     let vbox = gtk::Box::new(gtk::Orientation::Vertical, spacing);
@@ -188,10 +186,13 @@ pub async fn prompt_password_async(
     retry: bool,
 ) -> Option<String> {
     let msg_text = format!("Enter the passphrase for \"{archive_name}\":");
-    run_modal_prompt(parent, "Password Required", 10, 360, |win, vbox, send_once| {
+    run_modal_prompt(parent, "Password Required", 10, |win, vbox, send_once| {
         let msg = gtk::Label::new(Some(&msg_text));
         msg.set_xalign(0.0);
         msg.set_wrap(true);
+        msg.set_wrap_mode(gtk::pango::WrapMode::WordChar);
+        msg.set_width_chars(40);
+        msg.set_max_width_chars(40);
         vbox.append(&msg);
 
         if retry {
@@ -243,10 +244,13 @@ async fn prompt_conflict_async(
         .to_string();
     let suggested = suggest_renamed_filename(&orig_name);
 
-    run_modal_prompt(parent, "File Already Exists", 12, 460, |win, vbox, send_once| {
+    run_modal_prompt(parent, "File Already Exists", 12, |win, vbox, send_once| {
         let msg = gtk::Label::new(Some(&format!("A file already exists at:\n{display_path}")));
         msg.set_xalign(0.0);
         msg.set_wrap(true);
+        msg.set_wrap_mode(gtk::pango::WrapMode::WordChar);
+        msg.set_width_chars(52);
+        msg.set_max_width_chars(52);
         msg.set_selectable(true);
         vbox.append(&msg);
 
