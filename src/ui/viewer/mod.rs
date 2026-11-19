@@ -70,17 +70,23 @@ pub fn launch_standalone(app: &gtk::Application, initial_archive: Option<PathBuf
         .icon_name("document-open-symbolic")
         .tooltip_text("Open an archive")
         .build();
-    let new_btn = gtk::Button::builder()
-        .label("Create")
-        .icon_name("archive-insert-symbolic")
-        .tooltip_text("Create a new archive")
-        .build();
-    let extract_btn = gtk::Button::builder()
-        .label("Extract")
-        .icon_name("archive-extract-symbolic")
-        .tooltip_text("Extract selected entries or entire archive")
-        .sensitive(false)
-        .build();
+    let new_btn = make_themed_icon_button(
+        &[
+            "add-files-to-archive-symbolic",
+            "package-x-generic-symbolic",
+            "document-new-symbolic",
+        ],
+        "Create a new archive",
+    );
+    let extract_btn = make_themed_icon_button(
+        &[
+            "extract-archive-symbolic",
+            "archive-extract-symbolic",
+            "folder-download-symbolic",
+        ],
+        "Extract selected entries or entire archive",
+    );
+    extract_btn.set_sensitive(false);
     let test_btn = gtk::Button::builder()
         .label("Test")
         .icon_name("security-high-symbolic")
@@ -353,6 +359,17 @@ fn run_viewer_worker<FWork, FOk>(
             }
         },
     );
+}
+
+fn make_themed_icon_button(icon_names: &[&str], tooltip: &str) -> gtk::Button {
+    let icon = gio::ThemedIcon::from_names(icon_names);
+    let img = gtk::Image::from_gicon(&icon);
+    let btn = gtk::Button::builder()
+        .child(&img)
+        .tooltip_text(tooltip)
+        .build();
+    btn.add_css_class("image-button");
+    btn
 }
 
 fn install_search_unfocus(window: &gtk::ApplicationWindow, search_entry: &gtk::SearchEntry) {

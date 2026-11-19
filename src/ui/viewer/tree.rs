@@ -68,7 +68,7 @@ pub(super) fn build_tree_sidebar(state: &Rc<RefCell<ViewerState>>) -> TreeSideba
         let label = icon.next_sibling().and_downcast::<gtk::Label>().unwrap();
         let full_path = node.full_path();
         icon.set_icon_name(Some(if full_path.is_empty() {
-            "package-x-generic"
+            "package-x-generic-symbolic"
         } else {
             "folder-symbolic"
         }));
