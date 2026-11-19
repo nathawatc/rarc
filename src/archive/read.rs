@@ -428,7 +428,7 @@ pub fn extract_archive_with_session(
                     continue;
                 };
 
-                let Some(mut rel_out) = sanitize_entry_path(&archive_rel_str)? else {
+                let Some(mut rel_out) = sanitize_entry_path(archive_rel_str)? else {
                     continue;
                 };
 
@@ -471,7 +471,7 @@ pub fn extract_archive_with_session(
 
                 progress.send(
                     event_tx,
-                    &archive_rel_str,
+                    archive_rel_str,
                     session.bytes_done,
                     session.bytes_total,
                 );
@@ -484,7 +484,7 @@ pub fn extract_archive_with_session(
                         return Err(ArchiveError::UnsafePath(hl_str));
                     };
                     let stripped_hl = apply_strip_prefix(&hl_rel, strip_prefix)
-                        .and_then(|s| sanitize_entry_path(&s).ok().flatten())
+                        .and_then(|s| sanitize_entry_path(s).ok().flatten())
                         .unwrap_or_else(|| PathBuf::from(hl_rel));
                     let hl_dest = dest_dir.join(stripped_hl);
                     let hl_cstr = path_to_cstring(&hl_dest)?;
@@ -505,7 +505,7 @@ pub fn extract_archive_with_session(
                         &pass_ctx,
                         &mut session.bytes_done,
                         session.bytes_total,
-                        &archive_rel_str,
+                        archive_rel_str,
                         event_tx,
                         &mut progress,
                         cancel,

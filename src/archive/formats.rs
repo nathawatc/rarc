@@ -76,18 +76,28 @@ const READONLY_ARCHIVE_EXTS: &[&str] = &[
     ".zst", ".bz2", ".lz4", ".lzma", ".lzo", ".lz", ".lrzip",
 ];
 
+fn ends_with_ascii_ignore_case(s: &str, suffix_lower: &str) -> bool {
+    let sb = s.as_bytes();
+    let xb = suffix_lower.as_bytes();
+    sb.len() >= xb.len()
+        && sb[sb.len() - xb.len()..]
+            .iter()
+            .zip(xb)
+            .all(|(a, b)| a.to_ascii_lowercase() == *b)
+}
+
 /// Returns `true` when `path` ends with a known archive or compressed-stream extension.
 pub fn is_supported_archive_path(path: &Path) -> bool {
-    let lower = path
-        .file_name()
-        .and_then(|s| s.to_str())
-        .unwrap_or("")
-        .to_ascii_lowercase();
-    COMPOUND_TAR_EXTS.iter().any(|ext| lower.ends_with(ext))
+    let name = path.file_name().and_then(|s| s.to_str()).unwrap_or("");
+    COMPOUND_TAR_EXTS
+        .iter()
+        .any(|ext| ends_with_ascii_ignore_case(name, ext))
         || WRITABLE_EXT_SPECS
             .iter()
-            .any(|(ext, _)| lower.ends_with(ext))
-        || READONLY_ARCHIVE_EXTS.iter().any(|ext| lower.ends_with(ext))
+            .any(|(ext, _)| ends_with_ascii_ignore_case(name, ext))
+        || READONLY_ARCHIVE_EXTS
+            .iter()
+            .any(|ext| ends_with_ascii_ignore_case(name, ext))
 }
 
 /// Strips common archive extensions (including compound `.tar.*`) to derive a clean folder stem.
@@ -97,9 +107,8 @@ pub fn archive_stem(archive_path: &Path) -> String {
         .and_then(|s| s.to_str())
         .unwrap_or("extracted");
 
-    let lower = file_name.to_ascii_lowercase();
     for compound in COMPOUND_TAR_EXTS {
-        if lower.ends_with(compound) && file_name.len() > compound.len() {
+        if ends_with_ascii_ignore_case(file_name, compound) && file_name.len() > compound.len() {
             return file_name[..file_name.len() - compound.len()].to_string();
         }
     }
@@ -215,14 +224,10 @@ impl WritableSpec {
 }
 
 pub(super) fn infer_writable_from_extension(path: &Path) -> Result<WritableSpec, ArchiveError> {
-    let lower = path
-        .file_name()
-        .and_then(|s| s.to_str())
-        .unwrap_or("")
-        .to_ascii_lowercase();
+    let name = path.file_name().and_then(|s| s.to_str()).unwrap_or("");
     WRITABLE_EXT_SPECS
         .iter()
-        .find(|(ext, _)| lower.ends_with(ext))
+        .find(|(ext, _)| ends_with_ascii_ignore_case(name, ext))
         .map(|(_, spec)| *spec)
         .ok_or_else(|| {
             ArchiveError::UnsupportedFormat(format!("cannot add files to {}", path.display()))

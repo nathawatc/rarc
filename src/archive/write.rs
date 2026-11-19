@@ -53,6 +53,7 @@ pub fn create_archive(
     let mut bytes_done = 0u64;
     let mut written_count = 0usize;
     let mut progress = ProgressThrottle::default();
+    let mut io_buf = vec![0u8; 65536];
     let res = (|| -> Result<(), ArchiveError> {
         for item in &disk_items {
             if cancel.load(Ordering::Relaxed) {
@@ -61,6 +62,7 @@ pub fn create_archive(
             write_disk_item(
                 writer.as_ptr(),
                 item,
+                &mut io_buf,
                 &mut bytes_done,
                 bytes_total,
                 event_tx,
@@ -212,6 +214,7 @@ pub fn add_to_archive(
             }
         }
 
+        let mut io_buf = vec![0u8; 65536];
         for item in &disk_items {
             if cancel.load(Ordering::Relaxed) {
                 return Err(ArchiveError::Cancelled);
@@ -219,6 +222,7 @@ pub fn add_to_archive(
             write_disk_item(
                 writer.as_ptr(),
                 item,
+                &mut io_buf,
                 &mut bytes_done,
                 bytes_total,
                 event_tx,
@@ -400,9 +404,11 @@ fn collect_disk_recursive(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn write_disk_item(
     writer: *mut ffi::raw::archive,
     item: &DiskItem,
+    buf: &mut [u8],
     bytes_done: &mut u64,
     bytes_total: u64,
     event_tx: Option<&Sender<WorkerEvent>>,
@@ -448,12 +454,11 @@ fn write_disk_item(
                 )?;
 
                 let mut file = fs::File::open(&item.disk_path)?;
-                let mut buf = [0u8; 65536];
                 loop {
                     if cancel.load(Ordering::Relaxed) {
                         return Err(ArchiveError::Cancelled);
                     }
-                    let n = file.read(&mut buf)?;
+                    let n = file.read(buf)?;
                     if n == 0 {
                         break;
                     }

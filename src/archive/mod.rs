@@ -305,19 +305,21 @@ fn sanitize_single_filename(name: &str) -> Result<String, ArchiveError> {
     Ok(trimmed.to_string())
 }
 
-fn apply_strip_prefix(rel_path: &str, strip_prefix: Option<&str>) -> Option<String> {
+fn apply_strip_prefix<'a>(rel_path: &'a str, strip_prefix: Option<&str>) -> Option<&'a str> {
     if let Some(prefix) = strip_prefix
         .map(|p| p.trim_end_matches('/'))
         .filter(|p| !p.is_empty())
     {
-        let prefix_slash = format!("{prefix}/");
-        if let Some(stripped) = rel_path.strip_prefix(&prefix_slash) {
-            return Some(stripped.to_string());
+        if let Some(stripped) = rel_path
+            .strip_prefix(prefix)
+            .and_then(|rest| rest.strip_prefix('/'))
+        {
+            return Some(stripped);
         } else if rel_path == prefix {
             return None;
         }
     }
-    Some(rel_path.to_string())
+    Some(rel_path)
 }
 
 pub fn matches_selection(entry_path: &str, selected_prefixes: Option<&[String]>) -> bool {
