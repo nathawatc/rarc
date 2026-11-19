@@ -1,17 +1,18 @@
 mod ffi;
-mod ops;
+mod formats;
+mod read;
 #[cfg(test)]
 mod tests;
+mod write;
 
 use std::collections::HashSet;
 use std::path::{Component, Path, PathBuf};
 
 use async_channel::Sender;
 
-pub use ops::{
-    add_to_archive, archive_stem, create_archive, extract_archive_with_session,
-    is_supported_archive_path, list_archive, test_archive,
-};
+pub use formats::{archive_stem, is_supported_archive_path};
+pub use read::{extract_archive_with_session, list_archive, test_archive};
+pub use write::{add_to_archive, create_archive};
 
 /// Archive creation formats offered by the UI and `--tap create`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

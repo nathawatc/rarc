@@ -6,7 +6,8 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use super::ffi::{check_read_write, path_to_cstring, raw, OwnedEntry, WriteArchive};
-use super::ops::{extract_archive, infer_writable_from_extension, WritableSpec};
+use super::formats::{infer_writable_from_extension, WritableSpec};
+use super::read::extract_archive;
 use super::*;
 
 struct TestDir(PathBuf);
