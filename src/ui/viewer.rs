@@ -309,8 +309,9 @@ struct ViewerState {
 }
 
 type CellRightClickFn = Rc<dyn Fn(&gtk::Widget, f64, f64, Option<u32>)>;
-type NavFn = Rc<dyn Fn(String, bool, NavMode)>;
-type NavSlot = Rc<RefCell<Option<NavFn>>>;
+type NavCallback = Box<dyn Fn(String, bool, NavMode)>;
+type NavFn = Rc<NavCallback>;
+type NavWeak = std::rc::Weak<NavCallback>;
 
 /// Launches the standalone archive viewer/manager window.
 pub fn launch_standalone(app: &gtk::Application, initial_archive: Option<PathBuf>) {
@@ -663,7 +664,6 @@ pub fn launch_standalone(app: &gtk::Application, initial_archive: Option<PathBuf
     window.set_child(Some(&root_box));
 
     // Shared directory navigation helper keeping ColumnView, breadcrumbs, history, and left tree in sync
-    let nav_slot: NavSlot = Rc::new(RefCell::new(None));
     let navigate_to: NavFn = {
         let state_ref = state.clone();
         let crumbs_box = crumbs_box.clone();
@@ -674,52 +674,53 @@ pub fn launch_standalone(app: &gtk::Application, initial_archive: Option<PathBuf
         let tree_view_ref = tree_view.clone();
         let tree_model_ref = tree_model.clone();
         let tree_sel_ref = tree_selection.clone();
-        let nav_weak = Rc::downgrade(&nav_slot);
 
-        Rc::new(move |target_dir: String, sync_tree: bool, mode: NavMode| {
-            {
-                let mut st = state_ref.borrow_mut();
-                match mode {
-                    NavMode::Push => {
-                        if st.current_dir != target_dir {
-                            let prev = st.current_dir.clone();
-                            st.history_back.push(prev);
+        Rc::new_cyclic(|nav_weak| {
+            let nav_weak = nav_weak.clone();
+            Box::new(move |target_dir: String, sync_tree: bool, mode: NavMode| {
+                {
+                    let mut st = state_ref.borrow_mut();
+                    match mode {
+                        NavMode::Push => {
+                            if st.current_dir != target_dir {
+                                let prev = st.current_dir.clone();
+                                st.history_back.push(prev);
+                                st.history_forward.clear();
+                            }
+                        }
+                        NavMode::History => {}
+                        NavMode::Reset => {
+                            st.history_back.clear();
                             st.history_forward.clear();
                         }
                     }
-                    NavMode::History => {}
-                    NavMode::Reset => {
-                        st.history_back.clear();
-                        st.history_forward.clear();
-                    }
+                    st.current_dir = target_dir.clone();
+                    st.search_query.clear();
                 }
-                st.current_dir = target_dir.clone();
-                st.search_query.clear();
-            }
-            if !search_ref.text().is_empty() {
-                search_ref.set_text("");
-            }
-            selection_ref.unselect_all();
-            filter_ref.changed(gtk::FilterChange::Different);
+                if !search_ref.text().is_empty() {
+                    search_ref.set_text("");
+                }
+                selection_ref.unselect_all();
+                filter_ref.changed(gtk::FilterChange::Different);
 
-            if sync_tree {
-                state_ref.borrow_mut().syncing_tree = true;
-                sync_tree_selection(&tree_view_ref, &tree_model_ref, &tree_sel_ref, &target_dir);
-                state_ref.borrow_mut().syncing_tree = false;
-            }
+                if sync_tree {
+                    state_ref.borrow_mut().syncing_tree = true;
+                    sync_tree_selection(&tree_view_ref, &tree_model_ref, &tree_sel_ref, &target_dir);
+                    state_ref.borrow_mut().syncing_tree = false;
+                }
 
-            let archive_label = state_ref
-                .borrow()
-                .current_archive
-                .as_ref()
-                .and_then(|p| p.file_name())
-                .and_then(|s| s.to_str())
-                .unwrap_or("Archive")
-                .to_string();
-            render_breadcrumbs(&crumbs_box, &up_btn, &archive_label, &target_dir, &nav_weak);
+                let archive_label = state_ref
+                    .borrow()
+                    .current_archive
+                    .as_ref()
+                    .and_then(|p| p.file_name())
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("Archive")
+                    .to_string();
+                render_breadcrumbs(&crumbs_box, &up_btn, &archive_label, &target_dir, &nav_weak);
+            })
         })
     };
-    *nav_slot.borrow_mut() = Some(navigate_to.clone());
 
     // Thumb mouse buttons: Back (button 8) and Forward (button 9)
     {
@@ -1601,7 +1602,7 @@ fn render_breadcrumbs(
     up_btn: &gtk::Button,
     archive_label: &str,
     current_dir: &str,
-    nav_weak: &std::rc::Weak<RefCell<Option<NavFn>>>,
+    nav_weak: &NavWeak,
 ) {
     while let Some(child) = crumbs_box.first_child() {
         crumbs_box.remove(&child);
@@ -1635,9 +1636,7 @@ fn render_breadcrumbs(
         }
         let nav_weak = nav_weak.clone();
         btn.connect_clicked(move |_| {
-            if let Some(slot) = nav_weak.upgrade()
-                && let Some(ref nav) = *slot.borrow()
-            {
+            if let Some(nav) = nav_weak.upgrade() {
                 nav(target_dir.clone(), true, NavMode::Push);
             }
         });
