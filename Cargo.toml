@@ -2,6 +2,20 @@
 name = "rarc"
 version = "0.1.0"
 edition = "2024"
+description = "Lightweight, modern GTK4 archive manager"
+readme = "README.md"
+repository = "https://github.com/nathawatc/rarc"
+license = "GPL-3.0"
+keywords = ["archive", "manager", "gtk4"]
+categories = ["gui", "os::linux-apis"]
+links = "archive"
+publish = false
+
+[profile.release]
+strip = true
+lto = true
+panic = "abort"
+codegen-units = 1
 
 [dependencies]
 async-channel = "2.5"
