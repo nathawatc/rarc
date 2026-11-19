@@ -10,7 +10,7 @@ use gtk::prelude::*;
 
 use crate::archive::{
     add_to_archive, extract_archive_with_session, is_supported_archive_path, ArchiveEntry,
-    EntryKind, ExtractSession, OperationSummary,
+    EntryKind, ExtractOptions, ExtractSession, OperationSummary,
 };
 use crate::ui::dialogs::{show_create_dialog, show_properties_dialog};
 use crate::ui::{select_folder_dialog, session_temp_dir, show_message_dialog};
@@ -374,9 +374,11 @@ pub(super) fn activate_row(
             extract_archive_with_session(
                 &arch_worker,
                 &preview_dir,
-                Some(&[full_path]),
-                strip.as_deref(),
-                Some(is_raw),
+                ExtractOptions {
+                    selected_prefixes: Some(&[full_path]),
+                    strip_prefix: strip.as_deref(),
+                    known_raw: Some(is_raw),
+                },
                 &mut session,
                 Some(tx),
                 cancel,
@@ -466,9 +468,11 @@ pub(super) fn start_extract_dialog(
                     extract_archive_with_session(
                         &arch_worker,
                         &dest_dir,
-                        selected_opt.as_deref(),
-                        strip_prefix.as_deref(),
-                        Some(is_raw),
+                        ExtractOptions {
+                            selected_prefixes: selected_opt.as_deref(),
+                            strip_prefix: strip_prefix.as_deref(),
+                            known_raw: Some(is_raw),
+                        },
                         &mut session,
                         Some(tx),
                         cancel,
@@ -529,9 +533,11 @@ fn copy_selected_to_clipboard(
             extract_archive_with_session(
                 &arch_worker,
                 &stage_worker,
-                Some(&selected_worker),
-                strip_worker.as_deref(),
-                Some(is_raw),
+                ExtractOptions {
+                    selected_prefixes: Some(&selected_worker),
+                    strip_prefix: strip_worker.as_deref(),
+                    known_raw: Some(is_raw),
+                },
                 &mut session,
                 Some(tx),
                 cancel,

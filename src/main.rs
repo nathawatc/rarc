@@ -14,7 +14,7 @@ use gtk::prelude::*;
 
 use crate::archive::{
     extract_archive_with_session, list_archive, resolve_extract_here_dir, spawn_worker,
-    ArchiveError, ExtractSession, OperationSummary,
+    ArchiveError, ExtractOptions, ExtractSession, OperationSummary,
 };
 use crate::ui::dialogs::{run_worker_with_progress, show_create_dialog};
 use crate::ui::{select_folder_dialog, show_message_dialog};
@@ -169,9 +169,10 @@ fn run_tap_mode(app: &gtk::Application, action: TapAction, paths: Vec<PathBuf>) 
                     extract_archive_with_session(
                         &abs_archive,
                         &dest_dir,
-                        None,
-                        None,
-                        Some(is_raw),
+                        ExtractOptions {
+                            known_raw: Some(is_raw),
+                            ..Default::default()
+                        },
                         &mut session,
                         Some(tx),
                         &cancel_worker,
@@ -217,9 +218,7 @@ fn run_tap_mode(app: &gtk::Application, action: TapAction, paths: Vec<PathBuf>) 
                             extract_archive_with_session(
                                 &abs_archive,
                                 &dest_worker,
-                                None,
-                                None,
-                                None,
+                                ExtractOptions::default(),
                                 &mut session,
                                 Some(tx),
                                 &cancel_worker,

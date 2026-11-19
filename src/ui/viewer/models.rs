@@ -15,8 +15,8 @@ use gtk::prelude::*;
 use gtk::subclass::prelude::*;
 
 use crate::archive::{
-    extract_archive_with_session, spawn_worker, ArchiveEntry, EntryKind, ExtractSession,
-    OperationSummary, SelectionFilter, WorkerEvent,
+    extract_archive_with_session, spawn_worker, ArchiveEntry, EntryKind, ExtractOptions,
+    ExtractSession, OperationSummary, SelectionFilter, WorkerEvent,
 };
 use crate::ui::dialogs::{prompt_password_async, ArchivePropertiesInfo};
 use crate::ui::session_temp_dir;
@@ -134,9 +134,11 @@ pub(super) mod imp {
                     extract_archive_with_session(
                         &archive_path,
                         &stage_worker,
-                        Some(&selected_worker),
-                        strip_worker.as_deref(),
-                        Some(is_raw),
+                        ExtractOptions {
+                            selected_prefixes: Some(&selected_worker),
+                            strip_prefix: strip_worker.as_deref(),
+                            known_raw: Some(is_raw),
+                        },
                         &mut session,
                         Some(tx),
                         &cancel_worker,

@@ -576,10 +576,24 @@ fn extract_session_reuses_password_and_conflict_policy() {
     let o = out_dir.clone();
     let handle = std::thread::spawn(move || {
         let mut session = ExtractSession::new(None, 0);
-        extract_archive_with_session(&z1, &o, None, None, None, &mut session, Some(&tx), &c)
-            .unwrap();
-        extract_archive_with_session(&z2, &o, None, None, None, &mut session, Some(&tx), &c)
-            .unwrap();
+        extract_archive_with_session(
+            &z1,
+            &o,
+            ExtractOptions::default(),
+            &mut session,
+            Some(&tx),
+            &c,
+        )
+        .unwrap();
+        extract_archive_with_session(
+            &z2,
+            &o,
+            ExtractOptions::default(),
+            &mut session,
+            Some(&tx),
+            &c,
+        )
+        .unwrap();
         let _ = tx.send_blocking(WorkerEvent::Finished(Ok(OperationSummary::Extracted {
             password: session.password,
         })));

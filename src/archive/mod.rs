@@ -185,6 +185,14 @@ impl From<std::io::Error> for ArchiveError {
     }
 }
 
+/// Optional filtering and format hints for `extract_archive_with_session`.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct ExtractOptions<'a> {
+    pub selected_prefixes: Option<&'a [String]>,
+    pub strip_prefix: Option<&'a str>,
+    pub known_raw: Option<bool>,
+}
+
 /// Shared state preserved across multi-archive extraction runs.
 #[derive(Default)]
 pub struct ExtractSession {

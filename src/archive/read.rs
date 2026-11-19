@@ -18,7 +18,8 @@ use super::formats::archive_stem;
 use super::{
     apply_strip_prefix, sanitize_entry_path, sanitize_entry_path_str, sanitize_single_filename,
     validate_symlink_target, ArchiveEntry, ArchiveError, ArchiveListing, ConflictAction,
-    ConflictPolicy, ConflictResolution, EntryKind, ExtractSession, SelectionFilter, WorkerEvent,
+    ConflictPolicy, ConflictResolution, EntryKind, ExtractOptions, ExtractSession, SelectionFilter,
+    WorkerEvent,
 };
 
 const PROGRESS_INTERVAL: Duration = Duration::from_millis(50);
@@ -341,9 +342,11 @@ pub fn extract_archive(
     let count = extract_archive_with_session(
         archive_path,
         dest_dir,
-        selected_prefixes,
-        strip_prefix,
-        None,
+        ExtractOptions {
+            selected_prefixes,
+            strip_prefix,
+            known_raw: None,
+        },
         &mut session,
         event_tx,
         cancel,
@@ -352,23 +355,20 @@ pub fn extract_archive(
 }
 
 /// Single-pass extraction reusing shared conflict choices, password, and cumulative progress.
-#[allow(clippy::too_many_arguments)]
 pub fn extract_archive_with_session(
     archive_path: &Path,
     dest_dir: &Path,
-    selected_prefixes: Option<&[String]>,
-    strip_prefix: Option<&str>,
-    known_raw: Option<bool>,
+    options: ExtractOptions<'_>,
     session: &mut ExtractSession,
     event_tx: Option<&Sender<WorkerEvent>>,
     cancel: &Arc<AtomicBool>,
 ) -> Result<usize, ArchiveError> {
-    let mut raw_mode = known_raw.unwrap_or(false);
+    let mut raw_mode = options.known_raw.unwrap_or(false);
     fs::create_dir_all(dest_dir)?;
     let dest_dir = fs::canonicalize(dest_dir)?;
     let mut pass_ctx =
         PassphraseCtx::for_path(archive_path, session.password.as_deref(), event_tx, cancel);
-    let selection_filter = selected_prefixes.map(SelectionFilter::new);
+    let selection_filter = options.selected_prefixes.map(SelectionFilter::new);
     let mut files_extracted: usize = 0;
 
     loop {
@@ -378,7 +378,7 @@ pub fn extract_archive_with_session(
         let reader = match open_reader_step(
             archive_path,
             raw_mode,
-            known_raw.is_none() && !raw_mode,
+            options.known_raw.is_none() && !raw_mode,
             &mut pass_ctx,
         )? {
             ReaderOpen::Ready(r) => r,
@@ -402,7 +402,7 @@ pub fn extract_archive_with_session(
                     archive_path,
                     &pass_ctx,
                     &mut first,
-                    known_raw.is_none() && !raw_mode,
+                    options.known_raw.is_none() && !raw_mode,
                 )? {
                     HeaderStep::Eof => break,
                     HeaderStep::RetryRaw => {
@@ -426,7 +426,8 @@ pub fn extract_archive_with_session(
                     continue;
                 }
 
-                let Some(archive_rel_str) = apply_strip_prefix(&archive_rel_str, strip_prefix)
+                let Some(archive_rel_str) =
+                    apply_strip_prefix(&archive_rel_str, options.strip_prefix)
                 else {
                     continue;
                 };
@@ -486,7 +487,7 @@ pub fn extract_archive_with_session(
                     let Some(hl_rel) = sanitize_entry_path_str(&hl_str)? else {
                         return Err(ArchiveError::UnsafePath(hl_str));
                     };
-                    let stripped_hl = apply_strip_prefix(&hl_rel, strip_prefix)
+                    let stripped_hl = apply_strip_prefix(&hl_rel, options.strip_prefix)
                         .and_then(|s| sanitize_entry_path(s).ok().flatten())
                         .unwrap_or_else(|| PathBuf::from(hl_rel));
                     let hl_dest = dest_dir.join(stripped_hl);
