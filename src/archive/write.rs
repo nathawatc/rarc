@@ -109,8 +109,9 @@ pub fn add_to_archive(
     let mut effective_pw = listing
         .password
         .or_else(|| initial_password.filter(|p| !p.is_empty()).map(ToOwned::to_owned));
-    if has_encrypted && effective_pw.is_none() {
-        let mut probe_ctx = PassphraseCtx::for_path(archive_path, None, event_tx, cancel);
+    if has_encrypted {
+        let mut probe_ctx =
+            PassphraseCtx::for_path(archive_path, effective_pw.as_deref(), event_tx, cancel);
         effective_pw = probe_encrypted_password(archive_path, &mut probe_ctx, cancel)?;
         if effective_pw.is_none() {
             return Err(ArchiveError::PasswordRequired);

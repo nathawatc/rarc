@@ -379,7 +379,7 @@ fn encrypted_zip_add_preserves_encryption() {
     let e = extra.clone();
     let c = cancel.clone();
     let handle = std::thread::spawn(move || {
-        let res = add_to_archive(&z, &[e], "", None, Some(&tx), &c);
+        let res = add_to_archive(&z, &[e], "", Some("stale-wrong-pw"), Some(&tx), &c);
         let _ = tx.send_blocking(WorkerEvent::Finished(res.map(|(_, pw)| {
             OperationSummary::Added {
                 path: z,
