@@ -1,5 +1,6 @@
-use std::cell::RefCell;
-use std::collections::{BTreeMap, HashSet};
+use std::cell::{OnceCell, RefCell};
+use std::cmp::Ordering;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::rc::Rc;
@@ -51,25 +52,15 @@ pub(super) mod imp {
 
     impl ObjectImpl for ArchiveRowObject {}
 
+    #[derive(Default)]
     pub struct FolderTreeData {
         pub name: String,
         pub full_path: String,
-        pub children: gio::ListStore,
-    }
-
-    impl Default for FolderTreeData {
-        fn default() -> Self {
-            Self {
-                name: String::new(),
-                full_path: String::new(),
-                children: gio::ListStore::new::<super::FolderTreeNode>(),
-            }
-        }
     }
 
     #[derive(Default)]
     pub struct FolderTreeNode {
-        pub data: RefCell<FolderTreeData>,
+        pub data: OnceCell<FolderTreeData>,
     }
 
     #[glib::object_subclass]
@@ -250,24 +241,27 @@ glib::wrapper! {
 impl FolderTreeNode {
     pub(super) fn new(name: String, full_path: String) -> Self {
         let obj: Self = glib::Object::new();
-        {
-            let mut d = obj.imp().data.borrow_mut();
-            d.name = name;
-            d.full_path = full_path;
-        }
+        let _ = obj
+            .imp()
+            .data
+            .set(imp::FolderTreeData { name, full_path });
         obj
     }
 
-    pub(super) fn name(&self) -> String {
-        self.imp().data.borrow().name.clone()
+    pub(super) fn name(&self) -> &str {
+        self.imp()
+            .data
+            .get()
+            .map(|d| d.name.as_str())
+            .unwrap_or("")
     }
 
-    pub(super) fn full_path(&self) -> String {
-        self.imp().data.borrow().full_path.clone()
-    }
-
-    pub(super) fn children(&self) -> gio::ListStore {
-        self.imp().data.borrow().children.clone()
+    pub(super) fn full_path(&self) -> &str {
+        self.imp()
+            .data
+            .get()
+            .map(|d| d.full_path.as_str())
+            .unwrap_or("")
     }
 }
 
@@ -324,6 +318,7 @@ pub(super) struct ViewerState {
     pub syncing_tree: bool,
     pub history_back: Vec<String>,
     pub history_forward: Vec<String>,
+    pub dir_children: HashMap<String, Vec<String>>,
 }
 
 impl ViewerState {
@@ -420,8 +415,21 @@ pub(super) fn compute_selected_bytes(
     total
 }
 
-fn build_folder_children_map(entries: &[ArchiveEntry]) -> BTreeMap<String, Vec<(String, String)>> {
-    let mut dir_children: BTreeMap<String, Vec<(String, String)>> = BTreeMap::new();
+pub(super) fn path_basename(path: &str) -> &str {
+    match path.rsplit_once('/') {
+        Some((_, name)) => name,
+        None => path,
+    }
+}
+
+pub(super) fn cmp_ascii_ignore_case(a: &str, b: &str) -> Ordering {
+    a.bytes()
+        .map(|c| c.to_ascii_lowercase())
+        .cmp(b.bytes().map(|c| c.to_ascii_lowercase()))
+}
+
+pub(super) fn build_folder_children_map(entries: &[ArchiveEntry]) -> HashMap<String, Vec<String>> {
+    let mut dir_children: HashMap<String, Vec<String>> = HashMap::new();
     let mut seen_dirs: HashSet<String> = HashSet::new();
 
     for entry in entries {
@@ -439,42 +447,14 @@ fn build_folder_children_map(entries: &[ArchiveEntry]) -> BTreeMap<String, Vec<(
             }
             acc.push_str(part);
             if seen_dirs.insert(acc.clone()) {
-                dir_children
-                    .entry(parent)
-                    .or_default()
-                    .push((part.to_string(), acc.clone()));
+                dir_children.entry(parent).or_default().push(acc.clone());
             }
         }
     }
     for list in dir_children.values_mut() {
-        list.sort_by_key(|a| a.0.to_ascii_lowercase());
+        list.sort_by(|a, b| cmp_ascii_ignore_case(path_basename(a), path_basename(b)));
     }
     dir_children
-}
-
-pub(super) fn build_folder_tree(archive_name: &str, entries: &[ArchiveEntry]) -> FolderTreeNode {
-    let dir_children = build_folder_children_map(entries);
-
-    fn populate_node(
-        name: String,
-        full_path: String,
-        dir_children: &BTreeMap<String, Vec<(String, String)>>,
-    ) -> FolderTreeNode {
-        let node = FolderTreeNode::new(name, full_path.clone());
-        if let Some(children) = dir_children.get(&full_path) {
-            let store = node.children();
-            for (child_name, child_path) in children {
-                store.append(&populate_node(
-                    child_name.clone(),
-                    child_path.clone(),
-                    dir_children,
-                ));
-            }
-        }
-        node
-    }
-
-    populate_node(archive_name.to_string(), String::new(), &dir_children)
 }
 
 fn build_row_specs(entries: &[ArchiveEntry]) -> Vec<imp::ArchiveRowData> {
@@ -594,8 +574,8 @@ mod tests {
             dir_entry("zeta", None),
         ];
         let tree = build_folder_children_map(&entries);
-        let top: Vec<&str> = tree[""].iter().map(|(name, _)| name.as_str()).collect();
+        let top: Vec<&str> = tree[""].iter().map(|p| path_basename(p)).collect();
         assert_eq!(top, vec!["Alpha", "zeta"]);
-        assert_eq!(tree["zeta"], vec![("sub".into(), "zeta/sub".into())]);
+        assert_eq!(tree["zeta"], vec!["zeta/sub".to_string()]);
     }
 }

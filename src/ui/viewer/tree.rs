@@ -7,9 +7,11 @@ use gtk::gio;
 use gtk::glib;
 use gtk::prelude::*;
 
-use super::models::{FolderTreeNode, NavFn, NavMode, NavWeak, ViewerState};
+use super::models::{path_basename, FolderTreeNode, NavFn, NavMode, NavWeak, ViewerState};
 
-pub(super) fn build_tree_sidebar() -> (
+pub(super) fn build_tree_sidebar(
+    state: &Rc<RefCell<ViewerState>>,
+) -> (
     gio::ListStore,
     gtk::TreeListModel,
     gtk::SingleSelection,
@@ -17,14 +19,23 @@ pub(super) fn build_tree_sidebar() -> (
     gtk::ScrolledWindow,
 ) {
     let tree_root_store = gio::ListStore::new::<FolderTreeNode>();
-    let tree_model = gtk::TreeListModel::new(tree_root_store.clone(), false, false, |obj| {
+    let state_tree = state.clone();
+    let tree_model = gtk::TreeListModel::new(tree_root_store.clone(), false, false, move |obj| {
         let node = obj.downcast_ref::<FolderTreeNode>()?;
-        let children = node.children();
-        if children.n_items() > 0 {
-            Some(children.upcast())
-        } else {
-            None
+        let st = state_tree.borrow();
+        let children = st.dir_children.get(node.full_path())?;
+        if children.is_empty() {
+            return None;
         }
+        let store = gio::ListStore::new::<FolderTreeNode>();
+        let nodes: Vec<FolderTreeNode> = children
+            .iter()
+            .map(|child_path| {
+                FolderTreeNode::new(path_basename(child_path).to_string(), child_path.clone())
+            })
+            .collect();
+        store.extend_from_slice(&nodes);
+        Some(store.upcast())
     });
     let tree_selection = gtk::SingleSelection::new(Some(tree_model.clone()));
     tree_selection.set_autoselect(false);
@@ -58,7 +69,7 @@ pub(super) fn build_tree_sidebar() -> (
         } else {
             "folder-symbolic"
         }));
-        label.set_text(&node.name());
+        label.set_text(node.name());
     });
     tree_factory.connect_unbind(|_, obj| {
         let item = obj.downcast_ref::<gtk::ListItem>().unwrap();

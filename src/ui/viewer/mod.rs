@@ -25,7 +25,7 @@ use actions::{
 };
 use columns::append_columns;
 use models::{
-    build_folder_tree, build_row_objects, ArchiveRowObject, FolderTreeNode, NavFn, NavMode,
+    build_folder_children_map, build_row_objects, ArchiveRowObject, FolderTreeNode, NavFn, NavMode,
     ViewerState,
 };
 use tree::{build_tree_sidebar, install_thumb_buttons, make_navigate_to};
@@ -108,7 +108,7 @@ pub fn launch_standalone(app: &gtk::Application, initial_archive: Option<PathBuf
     breadcrumb_bar.append(&crumbs_scroll);
 
     let (tree_root_store, tree_model, tree_selection, tree_view, tree_scroll) =
-        build_tree_sidebar();
+        build_tree_sidebar(&state);
 
     // ColumnView data pipeline
     let store = gio::ListStore::new::<ArchiveRowObject>();
@@ -207,7 +207,7 @@ pub fn launch_standalone(app: &gtk::Application, initial_archive: Option<PathBuf
                 && let Ok(list_row) = item.downcast::<gtk::TreeListRow>()
                 && let Some(node) = list_row.item().and_downcast::<FolderTreeNode>()
             {
-                let target = node.full_path();
+                let target = node.full_path().to_string();
                 if state_ref.borrow().current_dir != target {
                     nav(target, false, NavMode::Push);
                 }
@@ -455,19 +455,12 @@ fn make_open_archive(
                         .file_name()
                         .and_then(|s| s.to_str())
                         .unwrap_or("Archive");
-                    let root_node = build_folder_tree(archive_name, &listing.entries);
+                    let dir_children = build_folder_children_map(&listing.entries);
+                    let root_node = FolderTreeNode::new(archive_name.to_string(), String::new());
                     let entry_count = listing.entries.len();
                     let total_uncompressed: u64 = listing.entries.iter().map(|e| e.size).sum();
                     let encrypted_count =
                         listing.entries.iter().filter(|e| e.is_encrypted).count();
-
-                    store_done.remove_all();
-                    store_done.extend_from_slice(&rows);
-                    tree_root_done.remove_all();
-                    tree_root_done.append(&root_node);
-                    if let Some(first_row) = tree_model_done.row(0) {
-                        first_row.set_expanded(true);
-                    }
 
                     let (target_dir, nav_mode) = {
                         let mut st = st_done.borrow_mut();
@@ -479,6 +472,7 @@ fn make_open_archive(
                         st.entry_count = entry_count;
                         st.total_uncompressed = total_uncompressed;
                         st.encrypted_count = encrypted_count;
+                        st.dir_children = dir_children;
                         if !same_archive {
                             st.current_dir.clear();
                         }
@@ -489,6 +483,14 @@ fn make_open_archive(
                         };
                         (st.current_dir.clone(), mode)
                     };
+
+                    store_done.remove_all();
+                    store_done.extend_from_slice(&rows);
+                    tree_root_done.remove_all();
+                    tree_root_done.append(&root_node);
+                    if let Some(first_row) = tree_model_done.row(0) {
+                        first_row.set_expanded(true);
+                    }
 
                     win_done.set_title(Some(&format!("{archive_name} - rarc")));
                     extract_done.set_sensitive(true);
