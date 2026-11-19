@@ -20,9 +20,12 @@ use crate::archive::{
 };
 use crate::ui::dialogs::{
     prompt_password_async, run_worker_with_progress, show_create_dialog, show_properties_dialog,
-    ArchivePropertiesInfo, PropertyEntry,
+    ArchivePropertiesInfo,
 };
-use crate::ui::{format_mtime, format_size, session_temp_dir, show_error_dialog, show_info_dialog};
+use crate::ui::{
+    format_mtime, format_size, select_folder_dialog, session_temp_dir, show_error_dialog,
+    show_info_dialog,
+};
 
 mod imp {
     use super::*;
@@ -30,17 +33,16 @@ mod imp {
 
     #[derive(Clone, Default)]
     pub struct ArchiveRowData {
+        pub entry: ArchiveEntry,
         pub name: String,
-        pub full_path: String,
         pub parent_dir: String,
-        pub size: u64,
-        pub compressed_size: Option<u64>,
         pub type_label: String,
-        pub mtime: Option<i64>,
-        pub mode: u32,
-        pub symlink_target: Option<String>,
-        pub is_dir: bool,
-        pub is_encrypted: bool,
+    }
+
+    impl ArchiveRowData {
+        pub fn is_dir(&self) -> bool {
+            self.entry.kind == EntryKind::Directory
+        }
     }
 
     #[derive(Default)]
@@ -240,19 +242,8 @@ impl ArchiveRowObject {
         f(&self.imp().data.borrow())
     }
 
-    fn to_property_entry(&self) -> PropertyEntry {
-        self.with_data(|d| PropertyEntry {
-            name: d.name.clone(),
-            full_path: d.full_path.clone(),
-            type_label: d.type_label.clone(),
-            size: d.size,
-            compressed_size: d.compressed_size,
-            mtime: d.mtime,
-            mode: d.mode,
-            symlink_target: d.symlink_target.clone(),
-            is_dir: d.is_dir,
-            is_encrypted: d.is_encrypted,
-        })
+    fn entry(&self) -> ArchiveEntry {
+        self.imp().data.borrow().entry.clone()
     }
 }
 
@@ -560,7 +551,7 @@ pub fn launch_standalone(app: &gtk::Application, initial_archive: Option<PathBuf
                 } else {
                     let q = st.search_query.as_str();
                     d.name.to_ascii_lowercase().contains(q)
-                        || d.full_path.to_ascii_lowercase().contains(q)
+                        || d.entry.path.to_ascii_lowercase().contains(q)
                 }
             })
         })
@@ -624,7 +615,8 @@ pub fn launch_standalone(app: &gtk::Application, initial_archive: Option<PathBuf
             let selected_rows = collect_selected_rows(&selection_ref);
             let count = selected_rows.len();
             let single_file = count == 1
-                && !selected_rows[0].with_data(|d| d.is_dir || d.symlink_target.is_some());
+                && !selected_rows[0]
+                    .with_data(|d| d.is_dir() || d.entry.kind == EntryKind::Symlink);
             act_open.set_enabled(count == 1);
             act_open_with.set_enabled(single_file);
             act_extract.set_enabled(count > 0);
@@ -1129,7 +1121,7 @@ pub fn launch_standalone(app: &gtk::Application, initial_archive: Option<PathBuf
             let Some(row) = rows.first() else {
                 return;
             };
-            if !row.with_data(|d| d.is_dir) {
+            if !row.with_data(|d| d.is_dir()) {
                 activate_row(&win_ref, &state_ref, row, true, &nav);
             }
         });
@@ -1160,9 +1152,9 @@ pub fn launch_standalone(app: &gtk::Application, initial_archive: Option<PathBuf
             let Some(info) = archive_properties_info(&state_ref.borrow()) else {
                 return;
             };
-            let selected: Vec<PropertyEntry> = collect_selected_rows(&selection_ref)
+            let selected: Vec<ArchiveEntry> = collect_selected_rows(&selection_ref)
                 .into_iter()
-                .map(|r| r.to_property_entry())
+                .map(|r| r.entry())
                 .collect();
             if !selected.is_empty() {
                 show_properties_dialog(win_ref.upcast_ref(), &selected, &info);
@@ -1372,12 +1364,12 @@ fn activate_row(
 ) {
     let (is_dir, is_symlink, full_path, name, parent_dir, entry_size) = row.with_data(|d| {
         (
-            d.is_dir,
-            d.symlink_target.is_some() || d.type_label == "Symbolic Link",
-            d.full_path.clone(),
+            d.is_dir(),
+            d.entry.kind == EntryKind::Symlink,
+            d.entry.path.clone(),
             d.name.clone(),
             d.parent_dir.clone(),
-            d.size,
+            d.entry.size,
         )
     });
 
@@ -1514,18 +1506,15 @@ fn start_extract_dialog(
     let initial_folder = archive_path
         .parent()
         .filter(|p| !p.as_os_str().is_empty())
-        .map(gio::File::for_path);
-    let mut builder = gtk::FileDialog::builder().title("Extract To Folder");
-    if let Some(ref f) = initial_folder {
-        builder = builder.initial_folder(f);
-    }
-    let dialog = builder.build();
-
+        .map(PathBuf::from);
     let win_extract = window.clone();
     let state_done = state.clone();
-    dialog.select_folder(Some(window), gio::Cancellable::NONE, move |res| {
-        let Ok(folder) = res else { return };
-        let Some(dest_dir) = folder.path() else { return };
+    select_folder_dialog(
+        Some(window.upcast_ref()),
+        "Extract To Folder",
+        initial_folder.as_deref(),
+        move |folder_opt| {
+            let Some(dest_dir) = folder_opt else { return };
 
         let cancel = Arc::new(AtomicBool::new(false));
         let cancel_worker = cancel.clone();
@@ -1567,7 +1556,8 @@ fn start_extract_dialog(
                 }
             },
         );
-    });
+        },
+    );
 }
 
 fn copy_selected_to_clipboard(
@@ -1872,7 +1862,7 @@ fn collect_selected_rows(selection: &gtk::MultiSelection) -> Vec<ArchiveRowObjec
 fn collect_selected_paths(selection: &gtk::MultiSelection) -> Vec<String> {
     collect_selected_rows(selection)
         .into_iter()
-        .map(|row| row.with_data(|d| d.full_path.clone()))
+        .map(|row| row.with_data(|d| d.entry.path.clone()))
         .collect()
 }
 
@@ -1883,8 +1873,8 @@ fn compute_selected_bytes(store: &gio::ListStore, selected_prefixes: Option<&[St
             && let Some(row) = obj.downcast_ref::<ArchiveRowObject>()
         {
             row.with_data(|d| {
-                if !d.is_dir && matches_selection(&d.full_path, selected_prefixes) {
-                    total += d.size;
+                if !d.is_dir() && matches_selection(&d.entry.path, selected_prefixes) {
+                    total += d.entry.size;
                 }
             });
         }
@@ -1898,7 +1888,6 @@ fn build_row_objects(entries: &[ArchiveEntry]) -> Vec<ArchiveRowObject> {
     let mut queued_dirs: HashSet<String> = HashSet::new();
 
     for entry in entries {
-        let is_dir = entry.kind == EntryKind::Directory;
         let (parent_dir, name) = split_parent_and_name(&entry.path);
         seen_paths.insert(entry.path.clone());
 
@@ -1919,33 +1908,29 @@ fn build_row_objects(entries: &[ArchiveEntry]) -> Vec<ArchiveRowObject> {
         rows.push(ArchiveRowObject::new(imp::ArchiveRowData {
             type_label: entry.kind.label(&name),
             name,
-            full_path: entry.path.clone(),
             parent_dir,
-            size: entry.size,
-            compressed_size: entry.compressed_size,
-            mtime: entry.mtime,
-            mode: entry.mode,
-            symlink_target: entry.symlink_target.clone(),
-            is_dir,
-            is_encrypted: entry.is_encrypted,
+            entry: entry.clone(),
         }));
     }
 
     for dir_path in queued_dirs {
         if seen_paths.insert(dir_path.clone()) {
             let (parent_dir, name) = split_parent_and_name(&dir_path);
-            rows.push(ArchiveRowObject::new(imp::ArchiveRowData {
-                name,
-                full_path: dir_path,
-                parent_dir,
+            let entry = ArchiveEntry {
+                path: dir_path,
                 size: 0,
                 compressed_size: None,
-                type_label: "Folder".to_string(),
+                kind: EntryKind::Directory,
                 mtime: None,
                 mode: 0o755,
                 symlink_target: None,
-                is_dir: true,
                 is_encrypted: false,
+            };
+            rows.push(ArchiveRowObject::new(imp::ArchiveRowData {
+                type_label: entry.kind.label(&name),
+                name,
+                parent_dir,
+                entry,
             }));
         }
     }
@@ -2021,13 +2006,13 @@ fn append_columns(view: &gtk::ColumnView, on_right_click: &CellRightClickFn) {
         let lock = label.next_sibling().and_downcast::<gtk::Image>().unwrap();
         set_cell_bound_pos(item, Some(item.position()));
         row.with_data(|d| {
-            icon.set_icon_name(Some(if d.is_dir {
+            icon.set_icon_name(Some(if d.is_dir() {
                 "folder-symbolic"
             } else {
                 "text-x-generic-symbolic"
             }));
             label.set_text(&d.name);
-            lock.set_visible(d.is_encrypted);
+            lock.set_visible(d.entry.is_encrypted);
         });
     });
     name_factory.connect_unbind(|_, obj| {
@@ -2039,8 +2024,8 @@ fn append_columns(view: &gtk::ColumnView, on_right_click: &CellRightClickFn) {
         let rb = b.downcast_ref::<ArchiveRowObject>().unwrap();
         ra.with_data(|da| {
             rb.with_data(|db| {
-                db.is_dir
-                    .cmp(&da.is_dir)
+                db.is_dir()
+                    .cmp(&da.is_dir())
                     .then_with(|| da.name.to_ascii_lowercase().cmp(&db.name.to_ascii_lowercase()))
                     .into()
             })
@@ -2064,13 +2049,13 @@ fn append_columns(view: &gtk::ColumnView, on_right_click: &CellRightClickFn) {
         130,
         on_right_click.clone(),
         |d| {
-            if d.is_dir {
+            if d.is_dir() {
                 "—".to_string()
             } else {
-                format_size(d.size)
+                format_size(d.entry.size)
             }
         },
-        |da, db| da.size.cmp(&db.size),
+        |da, db| da.entry.size.cmp(&db.entry.size),
     );
     view.append_column(&size_col);
 
@@ -2093,8 +2078,8 @@ fn append_columns(view: &gtk::ColumnView, on_right_click: &CellRightClickFn) {
         true,
         150,
         on_right_click.clone(),
-        |d| format_mtime(d.mtime),
-        |da, db| da.mtime.cmp(&db.mtime),
+        |d| format_mtime(d.entry.mtime),
+        |da, db| da.entry.mtime.cmp(&db.entry.mtime),
     );
     view.append_column(&mtime_col);
 }

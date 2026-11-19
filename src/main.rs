@@ -17,16 +17,16 @@ use crate::archive::{
     ArchiveError, ExtractSession, OperationSummary,
 };
 use crate::ui::dialogs::{run_worker_with_progress, show_create_dialog};
-use crate::ui::show_error_dialog;
+use crate::ui::{select_folder_dialog, show_error_dialog};
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum TapAction {
     ExtractHere,
     ExtractTo,
     Create,
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 enum AppMode {
     Standalone(Option<PathBuf>),
     Tap(TapAction, Vec<PathBuf>),
@@ -35,9 +35,17 @@ enum AppMode {
 }
 
 fn parse_args() -> Result<AppMode, lexopt::Error> {
+    parse_args_from(std::env::args_os())
+}
+
+fn parse_args_from<I>(args: I) -> Result<AppMode, lexopt::Error>
+where
+    I: IntoIterator,
+    I::Item: Into<std::ffi::OsString>,
+{
     use lexopt::prelude::*;
 
-    let mut parser = lexopt::Parser::from_env();
+    let mut parser = lexopt::Parser::from_iter(args);
     let mut tap_action: Option<TapAction> = None;
     let mut paths: Vec<PathBuf> = Vec::new();
 
@@ -186,67 +194,62 @@ fn run_tap_mode(app: &gtk::Application, action: TapAction, paths: Vec<PathBuf>) 
             let initial_dir = absolutize_path(&paths[0])
                 .parent()
                 .filter(|p| !p.as_os_str().is_empty())
-                .map(gio::File::for_path);
-            let mut builder = gtk::FileDialog::builder().title("Extract To Folder");
-            if let Some(ref folder) = initial_dir {
-                builder = builder.initial_folder(folder);
-            }
-            let dialog = builder.build();
+                .map(PathBuf::from);
+            select_folder_dialog(
+                None,
+                "Extract To Folder",
+                initial_dir.as_deref(),
+                move |folder_opt| {
+                    let Some(dest_dir) = folder_opt else {
+                        *app_hold.borrow_mut() = None;
+                        return;
+                    };
 
-            dialog.select_folder(None::<&gtk::Window>, gio::Cancellable::NONE, move |res| {
-                let Ok(folder) = res else {
-                    *app_hold.borrow_mut() = None;
-                    return;
-                };
-                let Some(dest_dir) = folder.path() else {
-                    *app_hold.borrow_mut() = None;
-                    return;
-                };
-
-                let cancel = Arc::new(AtomicBool::new(false));
-                let cancel_worker = cancel.clone();
-                let dest_worker = dest_dir.clone();
-                let rx = spawn_worker(move |tx| {
-                    let mut session = ExtractSession::new(None, 0);
-                    for archive in paths {
-                        let abs_archive = absolutize_path(&archive);
-                        extract_archive_with_session(
-                            &abs_archive,
-                            &dest_worker,
-                            None,
-                            None,
-                            None,
-                            &mut session,
-                            Some(tx),
-                            &cancel_worker,
-                        )?;
-                    }
-                    Ok(OperationSummary::Extracted {
-                        password: session.password,
-                    })
-                });
-
-                run_worker_with_progress(
-                    Some(&app_cloned),
-                    None,
-                    "Extracting Archive",
-                    rx,
-                    cancel,
-                    |res| {
-                        if let Err(err) = res
-                            && !matches!(err, ArchiveError::Cancelled)
-                        {
-                            show_error_dialog(
-                                None::<&gtk::Window>,
-                                "Extraction Failed",
-                                &err.to_string(),
-                            );
+                    let cancel = Arc::new(AtomicBool::new(false));
+                    let cancel_worker = cancel.clone();
+                    let dest_worker = dest_dir.clone();
+                    let rx = spawn_worker(move |tx| {
+                        let mut session = ExtractSession::new(None, 0);
+                        for archive in paths {
+                            let abs_archive = absolutize_path(&archive);
+                            extract_archive_with_session(
+                                &abs_archive,
+                                &dest_worker,
+                                None,
+                                None,
+                                None,
+                                &mut session,
+                                Some(tx),
+                                &cancel_worker,
+                            )?;
                         }
-                    },
-                );
-                // Progress window now holds the application; release the initial dialog hold.
-                *app_hold.borrow_mut() = None;
-            });
+                        Ok(OperationSummary::Extracted {
+                            password: session.password,
+                        })
+                    });
+
+                    run_worker_with_progress(
+                        Some(&app_cloned),
+                        None,
+                        "Extracting Archive",
+                        rx,
+                        cancel,
+                        |res| {
+                            if let Err(err) = res
+                                && !matches!(err, ArchiveError::Cancelled)
+                            {
+                                show_error_dialog(
+                                    None::<&gtk::Window>,
+                                    "Extraction Failed",
+                                    &err.to_string(),
+                                );
+                            }
+                        },
+                    );
+                    // Progress window now holds the application; release the initial dialog hold.
+                    *app_hold.borrow_mut() = None;
+                },
+            );
         }
     }
 }
@@ -258,5 +261,31 @@ fn absolutize_path(path: &PathBuf) -> PathBuf {
         cwd.join(path)
     } else {
         path.clone()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_cli_modes() {
+        assert_eq!(parse_args_from(["rarc"]).unwrap(), AppMode::Standalone(None));
+        assert_eq!(
+            parse_args_from(["rarc", "a.zip"]).unwrap(),
+            AppMode::Standalone(Some(PathBuf::from("a.zip")))
+        );
+        assert_eq!(parse_args_from(["rarc", "--help"]).unwrap(), AppMode::Help);
+        assert_eq!(parse_args_from(["rarc", "-V"]).unwrap(), AppMode::Version);
+        assert_eq!(
+            parse_args_from(["rarc", "--tap", "extract-here", "a.zip", "b.zip"]).unwrap(),
+            AppMode::Tap(
+                TapAction::ExtractHere,
+                vec![PathBuf::from("a.zip"), PathBuf::from("b.zip")],
+            )
+        );
+        assert!(parse_args_from(["rarc", "--tap", "bogus", "a.zip"]).is_err());
+        assert!(parse_args_from(["rarc", "--tap", "create"]).is_err());
+        assert!(parse_args_from(["rarc", "a.zip", "b.zip"]).is_err());
     }
 }

@@ -11,9 +11,10 @@ use gtk::glib;
 use gtk::prelude::*;
 
 use crate::archive::{
-    create_archive, ArchiveError, ArchiveFormat, ConflictResolution, OperationSummary, WorkerEvent,
+    create_archive, ArchiveEntry, ArchiveError, ArchiveFormat, ConflictResolution, EntryKind,
+    OperationSummary, WorkerEvent,
 };
-use crate::ui::{format_mtime, format_size, show_error_dialog};
+use crate::ui::{format_mtime, format_size, select_folder_dialog, show_error_dialog};
 
 /// Runs a worker `Receiver<WorkerEvent>` with a compact progress window and modal prompts.
 pub fn run_worker_with_progress<F>(
@@ -134,92 +135,98 @@ pub fn run_worker_with_progress<F>(
     });
 }
 
+async fn run_modal_prompt<T: 'static>(
+    parent: &gtk::Window,
+    title: &str,
+    spacing: i32,
+    default_width: i32,
+    build_ui: impl FnOnce(&gtk::Window, &gtk::Box, &Rc<dyn Fn(Option<T>)>),
+) -> Option<T> {
+    let (tx, rx) = async_channel::bounded(1);
+    let tx_cell = Rc::new(RefCell::new(Some(tx)));
+
+    let win = gtk::Window::builder()
+        .title(title)
+        .modal(true)
+        .resizable(false)
+        .transient_for(parent)
+        .default_width(default_width)
+        .build();
+
+    let vbox = gtk::Box::new(gtk::Orientation::Vertical, spacing);
+    vbox.add_css_class("rarc-dialog-body");
+    win.set_child(Some(&vbox));
+
+    let send_once: Rc<dyn Fn(Option<T>)> = {
+        let tx_cell = tx_cell.clone();
+        let win_ref = win.clone();
+        Rc::new(move |val| {
+            if let Some(sender) = tx_cell.borrow_mut().take() {
+                let _ = sender.try_send(val);
+            }
+            win_ref.close();
+        })
+    };
+
+    win.connect_close_request(move |_| {
+        if let Some(sender) = tx_cell.borrow_mut().take() {
+            let _ = sender.try_send(None);
+        }
+        glib::Propagation::Proceed
+    });
+
+    build_ui(&win, &vbox, &send_once);
+    win.present();
+    rx.recv().await.unwrap_or(None)
+}
+
 /// Shows a modal passphrase prompt and resolves with `Some(password)` or `None` if cancelled.
 pub async fn prompt_password_async(
     parent: &gtk::Window,
     archive_name: &str,
     retry: bool,
 ) -> Option<String> {
-    let (tx, rx) = async_channel::bounded(1);
-    let tx_cell = Rc::new(RefCell::new(Some(tx)));
+    let msg_text = format!("Enter the passphrase for \"{archive_name}\":");
+    run_modal_prompt(parent, "Password Required", 10, 360, |win, vbox, send_once| {
+        let msg = gtk::Label::new(Some(&msg_text));
+        msg.set_xalign(0.0);
+        msg.set_wrap(true);
+        vbox.append(&msg);
 
-    let win = gtk::Window::builder()
-        .title("Password Required")
-        .modal(true)
-        .resizable(false)
-        .transient_for(parent)
-        .default_width(360)
-        .build();
-
-    let vbox = gtk::Box::new(gtk::Orientation::Vertical, 10);
-    vbox.add_css_class("rarc-dialog-body");
-
-    let msg = gtk::Label::new(Some(&format!(
-        "Enter the passphrase for \"{archive_name}\":"
-    )));
-    msg.set_xalign(0.0);
-    msg.set_wrap(true);
-    vbox.append(&msg);
-
-    if retry {
-        let warn = gtk::Label::new(Some("Incorrect passphrase. Please try again."));
-        warn.set_xalign(0.0);
-        warn.add_css_class("error");
-        warn.add_css_class("rarc-hint");
-        vbox.append(&warn);
-    }
-
-    let entry = gtk::PasswordEntry::builder()
-        .show_peek_icon(true)
-        .activates_default(true)
-        .build();
-    vbox.append(&entry);
-
-    let btn_box = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-    btn_box.set_halign(gtk::Align::End);
-    let cancel_btn = gtk::Button::with_label("Cancel");
-    let ok_btn = gtk::Button::with_label("Unlock");
-    ok_btn.add_css_class("suggested-action");
-    btn_box.append(&cancel_btn);
-    btn_box.append(&ok_btn);
-    vbox.append(&btn_box);
-
-    win.set_child(Some(&vbox));
-    win.set_default_widget(Some(&ok_btn));
-
-    let send_once = {
-        let tx_cell = tx_cell.clone();
-        let win_ref = win.clone();
-        move |val: Option<String>| {
-            if let Some(sender) = tx_cell.borrow_mut().take() {
-                let _ = sender.try_send(val);
-            }
-            win_ref.close();
+        if retry {
+            let warn = gtk::Label::new(Some("Incorrect passphrase. Please try again."));
+            warn.set_xalign(0.0);
+            warn.add_css_class("error");
+            warn.add_css_class("rarc-hint");
+            vbox.append(&warn);
         }
-    };
 
-    {
-        let send_once = send_once.clone();
-        cancel_btn.connect_clicked(move |_| send_once(None));
-    }
-    {
-        let send_once = send_once.clone();
+        let entry = gtk::PasswordEntry::builder()
+            .show_peek_icon(true)
+            .activates_default(true)
+            .build();
+        vbox.append(&entry);
+
+        let btn_box = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        btn_box.set_halign(gtk::Align::End);
+        let cancel_btn = gtk::Button::with_label("Cancel");
+        let ok_btn = gtk::Button::with_label("Unlock");
+        ok_btn.add_css_class("suggested-action");
+        btn_box.append(&cancel_btn);
+        btn_box.append(&ok_btn);
+        vbox.append(&btn_box);
+        win.set_default_widget(Some(&ok_btn));
+
+        let send_cancel = send_once.clone();
+        cancel_btn.connect_clicked(move |_| send_cancel(None));
+
+        let send_ok = send_once.clone();
         let entry_ref = entry.clone();
-        ok_btn.connect_clicked(move |_| send_once(Some(entry_ref.text().to_string())));
-    }
-    {
-        let tx_cell = tx_cell.clone();
-        win.connect_close_request(move |_| {
-            if let Some(sender) = tx_cell.borrow_mut().take() {
-                let _ = sender.try_send(None);
-            }
-            glib::Propagation::Proceed
-        });
-    }
+        ok_btn.connect_clicked(move |_| send_ok(Some(entry_ref.text().to_string())));
 
-    win.present();
-    entry.grab_focus();
-    rx.recv().await.unwrap_or(None)
+        entry.grab_focus();
+    })
+    .await
 }
 
 /// Shows a modal file conflict dialog (`Overwrite`, `Overwrite All`, `Skip`, `Skip All`, `Rename`).
@@ -227,29 +234,7 @@ async fn prompt_conflict_async(
     parent: &gtk::Window,
     target_path: &Path,
 ) -> Option<ConflictResolution> {
-    let (tx, rx) = async_channel::bounded(1);
-    let tx_cell = Rc::new(RefCell::new(Some(tx)));
-
-    let win = gtk::Window::builder()
-        .title("File Already Exists")
-        .modal(true)
-        .resizable(false)
-        .transient_for(parent)
-        .default_width(460)
-        .build();
-
-    let vbox = gtk::Box::new(gtk::Orientation::Vertical, 12);
-    vbox.add_css_class("rarc-dialog-body");
-
-    let msg = gtk::Label::new(Some(&format!(
-        "A file already exists at:\n{}",
-        target_path.display()
-    )));
-    msg.set_xalign(0.0);
-    msg.set_wrap(true);
-    msg.set_selectable(true);
-    vbox.append(&msg);
-
+    let display_path = target_path.display().to_string();
     let orig_name = target_path
         .file_name()
         .and_then(|s| s.to_str())
@@ -257,88 +242,68 @@ async fn prompt_conflict_async(
         .to_string();
     let suggested = suggest_renamed_filename(&orig_name);
 
-    let rename_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-    let rename_lbl = gtk::Label::new(Some("Rename to:"));
-    let rename_entry = gtk::Entry::builder()
-        .text(&suggested)
-        .hexpand(true)
-        .build();
-    let rename_btn = gtk::Button::with_label("Rename");
-    rename_row.append(&rename_lbl);
-    rename_row.append(&rename_entry);
-    rename_row.append(&rename_btn);
-    vbox.append(&rename_row);
+    run_modal_prompt(parent, "File Already Exists", 12, 460, |win, vbox, send_once| {
+        let msg = gtk::Label::new(Some(&format!("A file already exists at:\n{display_path}")));
+        msg.set_xalign(0.0);
+        msg.set_wrap(true);
+        msg.set_selectable(true);
+        vbox.append(&msg);
 
-    let actions = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-    actions.set_halign(gtk::Align::End);
-    let skip_all_btn = gtk::Button::with_label("Skip All");
-    let skip_btn = gtk::Button::with_label("Skip");
-    let overwrite_all_btn = gtk::Button::with_label("Overwrite All");
-    let overwrite_btn = gtk::Button::with_label("Overwrite");
-    overwrite_btn.add_css_class("suggested-action");
+        let rename_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        let rename_lbl = gtk::Label::new(Some("Rename to:"));
+        let rename_entry = gtk::Entry::builder()
+            .text(&suggested)
+            .hexpand(true)
+            .build();
+        let rename_btn = gtk::Button::with_label("Rename");
+        rename_row.append(&rename_lbl);
+        rename_row.append(&rename_entry);
+        rename_row.append(&rename_btn);
+        vbox.append(&rename_row);
 
-    actions.append(&skip_all_btn);
-    actions.append(&skip_btn);
-    actions.append(&overwrite_all_btn);
-    actions.append(&overwrite_btn);
-    vbox.append(&actions);
+        let actions = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        actions.set_halign(gtk::Align::End);
+        let skip_all_btn = gtk::Button::with_label("Skip All");
+        let skip_btn = gtk::Button::with_label("Skip");
+        let overwrite_all_btn = gtk::Button::with_label("Overwrite All");
+        let overwrite_btn = gtk::Button::with_label("Overwrite");
+        overwrite_btn.add_css_class("suggested-action");
 
-    win.set_child(Some(&vbox));
-    win.set_default_widget(Some(&overwrite_btn));
+        actions.append(&skip_all_btn);
+        actions.append(&skip_btn);
+        actions.append(&overwrite_all_btn);
+        actions.append(&overwrite_btn);
+        vbox.append(&actions);
+        win.set_default_widget(Some(&overwrite_btn));
 
-    let send_once = {
-        let tx_cell = tx_cell.clone();
-        let win_ref = win.clone();
-        move |res: Option<ConflictResolution>| {
-            if let Some(sender) = tx_cell.borrow_mut().take() {
-                let _ = sender.try_send(res);
-            }
-            win_ref.close();
-        }
-    };
+        let bind_btn = |btn: &gtk::Button, resolution: ConflictResolution| {
+            let send = send_once.clone();
+            btn.connect_clicked(move |_| send(Some(resolution.clone())));
+        };
 
-    let bind_btn = |btn: &gtk::Button, resolution: ConflictResolution| {
-        let send = send_once.clone();
-        btn.connect_clicked(move |_| send(Some(resolution.clone())));
-    };
+        bind_btn(&skip_btn, ConflictResolution::Skip);
+        bind_btn(&skip_all_btn, ConflictResolution::SkipAll);
+        bind_btn(&overwrite_btn, ConflictResolution::Overwrite);
+        bind_btn(&overwrite_all_btn, ConflictResolution::OverwriteAll);
 
-    bind_btn(&skip_btn, ConflictResolution::Skip);
-    bind_btn(&skip_all_btn, ConflictResolution::SkipAll);
-    bind_btn(&overwrite_btn, ConflictResolution::Overwrite);
-    bind_btn(&overwrite_all_btn, ConflictResolution::OverwriteAll);
-
-    {
-        let send = send_once.clone();
+        let send_rename = send_once.clone();
         let entry_ref = rename_entry.clone();
         rename_btn.connect_clicked(move |_| {
             let name = entry_ref.text().trim().to_string();
             if !name.is_empty() && name != "." && name != ".." && !name.contains(['/', '\\']) {
-                send(Some(ConflictResolution::Rename(name)));
+                send_rename(Some(ConflictResolution::Rename(name)));
             }
         });
-    }
-    {
-        let entry_ref = rename_entry.clone();
+
         let btn_ref = rename_btn.clone();
-        entry_ref.connect_changed(move |e| {
+        rename_entry.connect_changed(move |e| {
             let txt = e.text();
             let t = txt.trim();
             let valid = !t.is_empty() && t != "." && t != ".." && !t.contains(['/', '\\']);
             btn_ref.set_sensitive(valid);
         });
-    }
-    {
-        let tx_cell = tx_cell.clone();
-        win.connect_close_request(move |_| {
-            if let Some(sender) = tx_cell.borrow_mut().take() {
-                let _ = sender.try_send(None);
-            }
-            glib::Propagation::Proceed
-        });
-    }
-
-    win.present();
-    rx.recv().await.unwrap_or(None)
+    })
+    .await
 }
 
 fn suggest_renamed_filename(name: &str) -> String {
@@ -506,20 +471,20 @@ pub fn show_create_dialog<F>(
         let dest_rc = dest_dir_rc.clone();
         let display_ref = dir_display.clone();
         dir_btn.connect_clicked(move |_| {
-            let dialog = gtk::FileDialog::builder()
-                .title("Select Destination Folder")
-                .initial_folder(&gio::File::for_path(&*dest_rc.borrow()))
-                .build();
             let dest_rc = dest_rc.clone();
             let display_ref = display_ref.clone();
-            dialog.select_folder(Some(&win_ref), gio::Cancellable::NONE, move |res| {
-                if let Ok(file) = res
-                    && let Some(path) = file.path()
-                {
-                    display_ref.set_text(&path.display().to_string());
-                    *dest_rc.borrow_mut() = path;
-                }
-            });
+            let initial = dest_rc.borrow().clone();
+            select_folder_dialog(
+                Some(&win_ref),
+                "Select Destination Folder",
+                Some(&initial),
+                move |path_opt| {
+                    if let Some(path) = path_opt {
+                        display_ref.set_text(&path.display().to_string());
+                        *dest_rc.borrow_mut() = path;
+                    }
+                },
+            );
         });
     }
 
@@ -558,14 +523,11 @@ pub fn show_create_dialog<F>(
         let summary_ref = files_summary.clone();
         let create_ref = create_btn.clone();
         add_folder_btn.connect_clicked(move |_| {
-            let dialog = gtk::FileDialog::builder().title("Select Folder to Add").build();
             let inputs_ref = inputs_ref.clone();
             let summary_ref = summary_ref.clone();
             let create_ref = create_ref.clone();
-            dialog.select_folder(Some(&win_ref), gio::Cancellable::NONE, move |res| {
-                if let Ok(file) = res
-                    && let Some(path) = file.path()
-                {
+            select_folder_dialog(Some(&win_ref), "Select Folder to Add", None, move |path_opt| {
+                if let Some(path) = path_opt {
                     let mut guard = inputs_ref.borrow_mut();
                     if !guard.contains(&path) {
                         guard.push(path);
@@ -751,20 +713,6 @@ fn build_output_path(dir: &Path, name: &str, fmt: ArchiveFormat) -> PathBuf {
     dir.join(final_name)
 }
 
-#[derive(Clone, Debug)]
-pub struct PropertyEntry {
-    pub name: String,
-    pub full_path: String,
-    pub type_label: String,
-    pub size: u64,
-    pub compressed_size: Option<u64>,
-    pub mtime: Option<i64>,
-    pub mode: u32,
-    pub symlink_target: Option<String>,
-    pub is_dir: bool,
-    pub is_encrypted: bool,
-}
-
 pub struct ArchivePropertiesInfo {
     pub archive_path: PathBuf,
     pub format_name: String,
@@ -776,7 +724,7 @@ pub struct ArchivePropertiesInfo {
 /// Shows a Properties modal for a single entry, multiple selected entries, or the archive itself.
 pub fn show_properties_dialog(
     parent: &gtk::Window,
-    selected: &[PropertyEntry],
+    selected: &[ArchiveEntry],
     archive_info: &ArchivePropertiesInfo,
 ) {
     let title = match selected.len() {
@@ -804,10 +752,15 @@ pub fn show_properties_dialog(
     let mut rows: Vec<(&str, String)> = Vec::new();
     match selected {
         [entry] => {
-            rows.push(("Name", entry.name.clone()));
-            rows.push(("Archive Path", entry.full_path.clone()));
-            rows.push(("Type", entry.type_label.clone()));
-            if !entry.is_dir {
+            let name = Path::new(&entry.path)
+                .file_name()
+                .and_then(|s| s.to_str())
+                .unwrap_or(&entry.path);
+            let is_dir = entry.kind == EntryKind::Directory;
+            rows.push(("Name", name.to_string()));
+            rows.push(("Archive Path", entry.path.clone()));
+            rows.push(("Type", entry.kind.label(name)));
+            if !is_dir {
                 rows.push((
                     "Uncompressed Size",
                     format!("{} ({} bytes)", format_size(entry.size), entry.size),
@@ -819,7 +772,7 @@ pub fn show_properties_dialog(
                 rows.push(("Compressed Size", comp));
             }
             rows.push(("Modified Date", format_mtime(entry.mtime)));
-            rows.push(("Permissions", format_mode(entry.mode, entry.is_dir)));
+            rows.push(("Permissions", format_mode(entry.mode, is_dir)));
             rows.push((
                 "Encrypted",
                 if entry.is_encrypted { "Yes" } else { "No" }.to_string(),
@@ -876,7 +829,10 @@ pub fn show_properties_dialog(
             ));
         }
         many => {
-            let dirs = many.iter().filter(|e| e.is_dir).count();
+            let dirs = many
+                .iter()
+                .filter(|e| e.kind == EntryKind::Directory)
+                .count();
             let files = many.len() - dirs;
             let total: u64 = many.iter().map(|e| e.size).sum();
             rows.push((

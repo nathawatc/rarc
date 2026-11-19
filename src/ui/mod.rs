@@ -2,7 +2,7 @@ pub mod dialogs;
 pub mod viewer;
 
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -81,6 +81,23 @@ pub fn show_error_dialog(parent: Option<&impl IsA<gtk::Window>>, title: &str, de
 
 pub fn show_info_dialog(parent: Option<&impl IsA<gtk::Window>>, title: &str, detail: &str) {
     show_message_dialog(parent, title, detail);
+}
+
+pub fn select_folder_dialog(
+    parent: Option<&gtk::Window>,
+    title: &str,
+    initial_dir: Option<&Path>,
+    on_done: impl FnOnce(Option<PathBuf>) + 'static,
+) {
+    let mut builder = gtk::FileDialog::builder().title(title);
+    if let Some(dir) = initial_dir.filter(|p| !p.as_os_str().is_empty()) {
+        builder = builder.initial_folder(&gio::File::for_path(dir));
+    }
+    builder
+        .build()
+        .select_folder(parent, gio::Cancellable::NONE, move |res| {
+            on_done(res.ok().and_then(|f| f.path()));
+        });
 }
 
 fn show_message_dialog(parent: Option<&impl IsA<gtk::Window>>, title: &str, detail: &str) {

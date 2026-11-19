@@ -57,9 +57,10 @@ impl ArchiveFormat {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum EntryKind {
     Directory,
+    #[default]
     File,
     Symlink,
     Other,
@@ -79,7 +80,7 @@ impl EntryKind {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct ArchiveEntry {
     /// Normalized forward-slash relative path inside the archive (never empty, no trailing slash).
     pub path: String,
