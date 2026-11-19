@@ -67,7 +67,6 @@ pub(super) mod imp {
         pub total_bytes: Cell<u64>,
         pub(in crate::ui::viewer) state: RefCell<std::rc::Weak<RefCell<ViewerState>>>,
         pub window: glib::WeakRef<gtk::Window>,
-        pub seq: Cell<u64>,
     }
 
     #[glib::object_subclass]
@@ -102,8 +101,14 @@ pub(super) mod imp {
             let total_bytes = self.total_bytes.get();
             let state_weak = self.state.borrow().clone();
             let window = self.window.upgrade();
-            let seq = self.seq.get().wrapping_add(1);
-            self.seq.set(seq);
+            let seq = state_weak
+                .upgrade()
+                .map(|st_rc| {
+                    let mut st = st_rc.borrow_mut();
+                    st.stage_seq += 1;
+                    st.stage_seq
+                })
+                .unwrap_or(0);
 
             Box::pin(async move {
                 if mime != "text/uri-list" || selected.is_empty() {
