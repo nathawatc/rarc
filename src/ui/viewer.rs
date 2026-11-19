@@ -285,6 +285,13 @@ impl ArchiveDragProvider {
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum NavMode {
+    Push,
+    History,
+    Reset,
+}
+
 #[derive(Default)]
 struct ViewerState {
     current_archive: Option<PathBuf>,
@@ -297,10 +304,12 @@ struct ViewerState {
     total_uncompressed: u64,
     encrypted_count: usize,
     syncing_tree: bool,
+    history_back: Vec<String>,
+    history_forward: Vec<String>,
 }
 
 type CellRightClickFn = Rc<dyn Fn(&gtk::Widget, f64, f64, Option<u32>)>;
-type NavFn = Rc<dyn Fn(String, bool)>;
+type NavFn = Rc<dyn Fn(String, bool, NavMode)>;
 type NavSlot = Rc<RefCell<Option<NavFn>>>;
 
 /// Launches the standalone archive viewer/manager window.
@@ -597,7 +606,7 @@ pub fn launch_standalone(app: &gtk::Application, initial_archive: Option<PathBuf
     root_box.append(&stack);
     window.set_child(Some(&root_box));
 
-    // Shared directory navigation helper keeping ColumnView, breadcrumbs, and left tree in sync
+    // Shared directory navigation helper keeping ColumnView, breadcrumbs, history, and left tree in sync
     let nav_slot: NavSlot = Rc::new(RefCell::new(None));
     let navigate_to: NavFn = {
         let state_ref = state.clone();
@@ -610,9 +619,23 @@ pub fn launch_standalone(app: &gtk::Application, initial_archive: Option<PathBuf
         let tree_sel_ref = tree_selection.clone();
         let nav_weak = Rc::downgrade(&nav_slot);
 
-        Rc::new(move |target_dir: String, sync_tree: bool| {
+        Rc::new(move |target_dir: String, sync_tree: bool, mode: NavMode| {
             {
                 let mut st = state_ref.borrow_mut();
+                match mode {
+                    NavMode::Push => {
+                        if st.current_dir != target_dir {
+                            let prev = st.current_dir.clone();
+                            st.history_back.push(prev);
+                            st.history_forward.clear();
+                        }
+                    }
+                    NavMode::History => {}
+                    NavMode::Reset => {
+                        st.history_back.clear();
+                        st.history_forward.clear();
+                    }
+                }
                 st.current_dir = target_dir.clone();
                 st.search_query.clear();
             }
@@ -641,6 +664,44 @@ pub fn launch_standalone(app: &gtk::Application, initial_archive: Option<PathBuf
     };
     *nav_slot.borrow_mut() = Some(navigate_to.clone());
 
+    // Thumb mouse buttons: Back (button 8) and Forward (button 9)
+    {
+        let thumb_click = gtk::GestureClick::builder()
+            .button(0)
+            .propagation_phase(gtk::PropagationPhase::Capture)
+            .build();
+        let state_ref = state.clone();
+        let nav = navigate_to.clone();
+        thumb_click.connect_pressed(move |gesture, _, _, _| {
+            let btn = gesture.current_button();
+            if btn != 8 && btn != 9 {
+                return;
+            }
+            gesture.set_state(gtk::EventSequenceState::Claimed);
+            let target = {
+                let mut st = state_ref.borrow_mut();
+                if st.current_archive.is_none() {
+                    return;
+                }
+                if btn == 8 {
+                    st.history_back.pop().inspect(|_| {
+                        let cur = st.current_dir.clone();
+                        st.history_forward.push(cur);
+                    })
+                } else {
+                    st.history_forward.pop().inspect(|_| {
+                        let cur = st.current_dir.clone();
+                        st.history_back.push(cur);
+                    })
+                }
+            };
+            if let Some(dir) = target {
+                nav(dir, true, NavMode::History);
+            }
+        });
+        window.add_controller(thumb_click);
+    }
+
     // Left tree selection listener
     {
         let state_ref = state.clone();
@@ -655,7 +716,7 @@ pub fn launch_standalone(app: &gtk::Application, initial_archive: Option<PathBuf
             {
                 let target = node.full_path();
                 if state_ref.borrow().current_dir != target {
-                    nav(target, false);
+                    nav(target, false, NavMode::Push);
                 }
             }
         });
@@ -674,7 +735,7 @@ pub fn launch_standalone(app: &gtk::Application, initial_archive: Option<PathBuf
                     String::new()
                 }
             };
-            nav(next, true);
+            nav(next, true, NavMode::Push);
         });
     }
 
@@ -770,7 +831,7 @@ pub fn launch_standalone(app: &gtk::Application, initial_archive: Option<PathBuf
                             first_row.set_expanded(true);
                         }
 
-                        let target_dir = {
+                        let (target_dir, nav_mode) = {
                             let mut st = st_done.borrow_mut();
                             let same_archive = st.current_archive.as_ref() == Some(&path_done);
                             st.current_archive = Some(path_done.clone());
@@ -782,7 +843,12 @@ pub fn launch_standalone(app: &gtk::Application, initial_archive: Option<PathBuf
                             if !same_archive {
                                 st.current_dir.clear();
                             }
-                            st.current_dir.clone()
+                            let mode = if same_archive {
+                                NavMode::History
+                            } else {
+                                NavMode::Reset
+                            };
+                            (st.current_dir.clone(), mode)
                         };
 
                         win_done.set_title(Some(&format!("{archive_name} - rarc")));
@@ -790,7 +856,7 @@ pub fn launch_standalone(app: &gtk::Application, initial_archive: Option<PathBuf
                         test_done.set_sensitive(true);
                         props_done.set_sensitive(true);
                         stack_done.set_visible_child_name("list");
-                        nav_done(target_dir, true);
+                        nav_done(target_dir, true, nav_mode);
                     }
                     Ok(_) | Err(ArchiveError::Cancelled) => {}
                     Err(err) => {
@@ -1177,7 +1243,7 @@ fn activate_row(
     state: &Rc<RefCell<ViewerState>>,
     row: &ArchiveRowObject,
     always_ask: bool,
-    navigate_to: &Rc<dyn Fn(String, bool)>,
+    navigate_to: &NavFn,
 ) {
     let (is_dir, full_path, name, parent_dir) = row.with_data(|d| {
         (
@@ -1189,7 +1255,7 @@ fn activate_row(
     });
 
     if is_dir {
-        navigate_to(full_path, true);
+        navigate_to(full_path, true, NavMode::Push);
         return;
     }
 
@@ -1515,7 +1581,7 @@ fn render_breadcrumbs(
             if let Some(slot) = nav_weak.upgrade()
                 && let Some(ref nav) = *slot.borrow()
             {
-                nav(target_dir.clone(), true);
+                nav(target_dir.clone(), true, NavMode::Push);
             }
         });
         crumbs_box.append(&btn);
