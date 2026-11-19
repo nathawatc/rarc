@@ -33,10 +33,11 @@ updates over `async_channel`.
    paired with `column_view.connect_destroy(|_| pop.unparent())` so GTK tears
    down the popover cleanly without widget-parent warnings.
 3. **Virtualized cell right-clicks**: `columns.rs` stores
-   `BoundRowPos(Rc<RefCell<Option<u32>>>)` on each cell child via
-   `"rarc-pos-cell"` in `connect_setup`, updating it in `connect_bind` and
-   clearing it to `None` in `connect_unbind` so right-clicking an
-   unbound/recycled widget never acts on a stale index.
+   `BoundRowPos(Cell<u32>)` on each cell child via `"rarc-pos-cell"` in
+   `connect_setup`, updating it in `connect_bind` and clearing it to `u32::MAX`
+   in `connect_unbind`; a single right-click `GestureClick` on `column_view`
+   resolves the row via `pick_row_pos` so recycled widgets never act on a stale
+   index.
 4. **Application lifetime holds (`--tap` mode)**: `--tap` windows have no main
    viewer window, so `run_worker_with_progress`, `TapAction::ExtractTo`, and
    `show_create_dialog`'s transition into progress hold `app.hold()` explicitly

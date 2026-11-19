@@ -23,7 +23,7 @@ use crate::ui::{format_size, show_error_dialog, show_info_dialog};
 use actions::{
     activate_row, build_context_menu, install_context_actions, install_dnd, start_extract_dialog,
 };
-use columns::append_columns;
+use columns::{append_columns, pick_row_pos};
 use models::{
     index_archive_entries, refresh_visible_store, ArchiveRowObject, FolderTreeNode, NavFn, NavMode,
     ViewerState,
@@ -125,19 +125,20 @@ pub fn launch_standalone(app: &gtk::Application, initial_archive: Option<PathBuf
     let (act_open, act_open_with, act_extract, act_copy, act_props, show_context_menu) =
         build_context_menu(&window, &column_view, &selection, &state);
 
-    append_columns(&column_view, &show_context_menu);
+    append_columns(&column_view);
     column_view.set_model(Some(&selection));
 
-    // Fallback right-click on empty whitespace below rows
+    // Single right-click gesture on ColumnView (picks cell row position via BoundRowPos)
     {
-        let bg_click = gtk::GestureClick::builder().button(3).build();
+        let right_click = gtk::GestureClick::builder().button(3).build();
         let col_ref = column_view.clone();
         let show_menu = show_context_menu.clone();
-        bg_click.connect_pressed(move |gesture, _, x, y| {
+        right_click.connect_pressed(move |gesture, _, x, y| {
             gesture.set_state(gtk::EventSequenceState::Claimed);
-            show_menu(col_ref.upcast_ref(), x, y, None);
+            let pos = pick_row_pos(&col_ref, x, y);
+            show_menu(x, y, pos);
         });
-        column_view.add_controller(bg_click);
+        column_view.add_controller(right_click);
     }
 
     let scrolled = gtk::ScrolledWindow::builder()

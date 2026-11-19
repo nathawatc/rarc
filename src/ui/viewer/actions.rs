@@ -58,7 +58,6 @@ pub(super) fn build_context_menu(
     }
 
     let show_context_menu: CellRightClickFn = {
-        let column_ref = column_view.clone();
         let selection_ref = selection.clone();
         let popover_ref = popover.clone();
         let state_ref = state.clone();
@@ -68,7 +67,7 @@ pub(super) fn build_context_menu(
         let act_copy = act_copy.clone();
         let act_props = act_props.clone();
 
-        Rc::new(move |src_widget, x, y, pos_opt| {
+        Rc::new(move |x, y, pos_opt| {
             if state_ref.borrow().current_archive.is_none() {
                 return;
             }
@@ -89,13 +88,7 @@ pub(super) fn build_context_menu(
             act_copy.set_enabled(count > 0);
             act_props.set_enabled(count > 0);
 
-            let rect = if let Some(pt) =
-                src_widget.compute_point(&column_ref, &gtk::graphene::Point::new(x as f32, y as f32))
-            {
-                gdk::Rectangle::new(pt.x().round() as i32, pt.y().round() as i32, 1, 1)
-            } else {
-                gdk::Rectangle::new(x.round() as i32, y.round() as i32, 1, 1)
-            };
+            let rect = gdk::Rectangle::new(x.round() as i32, y.round() as i32, 1, 1);
             popover_ref.set_pointing_to(Some(&rect));
             popover_ref.popup();
         })
