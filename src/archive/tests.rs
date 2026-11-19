@@ -90,12 +90,13 @@ fn dummy_entry(path: &str, kind: EntryKind) -> ArchiveEntry {
 
 #[test]
 fn smart_root_folder_detection() {
+    let mut claimed = HashSet::new();
     let single_dir_entries = vec![
         dummy_entry("proj", EntryKind::Directory),
         dummy_entry("proj/main.rs", EntryKind::File),
     ];
     assert_eq!(
-        resolve_extract_here_dir(&single_dir_entries, Path::new("/tmp/proj.tar.zst")),
+        resolve_extract_here_dir(&single_dir_entries, Path::new("/tmp/proj.tar.zst"), &mut claimed),
         PathBuf::from("/tmp")
     );
 
@@ -104,8 +105,12 @@ fn smart_root_folder_detection() {
         dummy_entry("b.txt", EntryKind::File),
     ];
     assert_eq!(
-        resolve_extract_here_dir(&multi_root, Path::new("/tmp/bundle.tar.xz")),
+        resolve_extract_here_dir(&multi_root, Path::new("/tmp/bundle.tar.xz"), &mut claimed),
         PathBuf::from("/tmp/bundle")
+    );
+    assert_eq!(
+        resolve_extract_here_dir(&multi_root, Path::new("/tmp/bundle.zip"), &mut claimed),
+        PathBuf::from("/tmp/bundle (1)")
     );
 }
 

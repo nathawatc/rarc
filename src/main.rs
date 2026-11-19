@@ -149,6 +149,7 @@ fn run_tap_mode(app: &gtk::Application, action: TapAction, paths: Vec<PathBuf>) 
             let cancel_worker = cancel.clone();
             let rx = spawn_worker(move |tx| {
                 let mut jobs = Vec::with_capacity(paths.len());
+                let mut claimed_dirs = std::collections::HashSet::new();
                 let mut shared_pw: Option<String> = None;
                 let mut total_bytes = 0u64;
                 for archive in paths {
@@ -159,7 +160,8 @@ fn run_tap_mode(app: &gtk::Application, action: TapAction, paths: Vec<PathBuf>) 
                         shared_pw = Some(pw);
                     }
                     total_bytes += listing.entries.iter().map(|e| e.size).sum::<u64>();
-                    let dest_dir = resolve_extract_here_dir(&listing.entries, &abs_archive);
+                    let dest_dir =
+                        resolve_extract_here_dir(&listing.entries, &abs_archive, &mut claimed_dirs);
                     jobs.push((abs_archive, dest_dir, listing.is_raw));
                 }
                 let mut session = ExtractSession::new(shared_pw, total_bytes);

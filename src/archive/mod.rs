@@ -338,7 +338,11 @@ pub fn matches_selection(entry_path: &str, selected_prefixes: Option<&[String]>)
 /// Smart root-folder rule for `--tap extract-here`:
 /// - Extract directly into `parent` if there is a single top-level directory (or single file).
 /// - Otherwise create `<parent>/<archive_stem>/` (with numeric suffix if it already exists).
-pub fn resolve_extract_here_dir(entries: &[ArchiveEntry], archive_path: &Path) -> PathBuf {
+pub fn resolve_extract_here_dir(
+    entries: &[ArchiveEntry],
+    archive_path: &Path,
+    claimed: &mut HashSet<PathBuf>,
+) -> PathBuf {
     let parent = archive_path
         .parent()
         .filter(|p| !p.as_os_str().is_empty())
@@ -371,12 +375,14 @@ pub fn resolve_extract_here_dir(entries: &[ArchiveEntry], archive_path: &Path) -
 
     let stem = archive_stem(archive_path);
     let base = parent.join(&stem);
-    if !base.exists() {
+    if !base.exists() && !claimed.contains(&base) {
+        claimed.insert(base.clone());
         return base;
     }
     for i in 1..=1000 {
         let candidate = parent.join(format!("{stem} ({i})"));
-        if !candidate.exists() {
+        if !candidate.exists() && !claimed.contains(&candidate) {
+            claimed.insert(candidate.clone());
             return candidate;
         }
     }
