@@ -14,7 +14,7 @@ static TEMP_ROOT: OnceLock<Mutex<Option<PathBuf>>> = OnceLock::new();
 
 pub fn load_css() {
     let provider = gtk::CssProvider::new();
-    provider.load_from_data(include_str!("../../resources/style.css"));
+    provider.load_from_string(include_str!("../../resources/style.css"));
     if let Some(display) = gdk::Display::default() {
         gtk::style_context_add_provider_for_display(
             &display,
@@ -76,6 +76,14 @@ pub fn format_mtime(mtime: Option<i64>) -> String {
 }
 
 pub fn show_error_dialog(parent: Option<&impl IsA<gtk::Window>>, title: &str, detail: &str) {
+    show_message_dialog(parent, title, detail);
+}
+
+pub fn show_info_dialog(parent: Option<&impl IsA<gtk::Window>>, title: &str, detail: &str) {
+    show_message_dialog(parent, title, detail);
+}
+
+fn show_message_dialog(parent: Option<&impl IsA<gtk::Window>>, title: &str, detail: &str) {
     let win = gtk::Window::builder()
         .title(title)
         .modal(true)
