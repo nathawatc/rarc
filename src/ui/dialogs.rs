@@ -625,54 +625,91 @@ pub fn show_create_dialog<F>(
             };
             let inputs = inputs_ref.borrow().clone();
 
-            *completed_ref.borrow_mut() = true;
-            // Hold app lifetime across closing Create dialog and presenting Progress window.
-            let _hold = app_cloned.as_ref().map(|a| a.hold());
-            win_ref.destroy();
+            let start_creation = {
+                let app_cloned = app_cloned.clone();
+                let parent_cloned = parent_cloned.clone();
+                let win_ref = win_ref.clone();
+                let completed_ref = completed_ref.clone();
+                let cb = cb.clone();
+                move |output_path: PathBuf,
+                      fmt: ArchiveFormat,
+                      inputs: Vec<PathBuf>,
+                      password: Option<String>| {
+                    *completed_ref.borrow_mut() = true;
+                    // Hold app lifetime across closing Create dialog and presenting Progress window.
+                    let _hold = app_cloned.as_ref().map(|a| a.hold());
+                    win_ref.destroy();
 
-            let cancel = Arc::new(AtomicBool::new(false));
-            let cancel_worker = cancel.clone();
-            let out_worker = output_path.clone();
-            let rx = crate::archive::spawn_worker(move |tx| {
-                create_archive(
-                    &out_worker,
-                    fmt,
-                    &inputs,
-                    password.as_deref(),
-                    Some(tx),
-                    &cancel_worker,
-                )?;
-                Ok(OperationSummary::Created(out_worker))
-            });
+                    let cancel = Arc::new(AtomicBool::new(false));
+                    let cancel_worker = cancel.clone();
+                    let out_worker = output_path.clone();
+                    let rx = crate::archive::spawn_worker(move |tx| {
+                        create_archive(
+                            &out_worker,
+                            fmt,
+                            &inputs,
+                            password.as_deref(),
+                            Some(tx),
+                            &cancel_worker,
+                        )?;
+                        Ok(OperationSummary::Created(out_worker))
+                    });
 
-            let cb_done = cb.clone();
-            let parent_err = parent_cloned.clone();
-            run_worker_with_progress(
-                app_cloned.as_ref(),
-                parent_cloned.as_ref(),
-                &format!(
-                    "Creating {}",
-                    output_path
-                        .file_name()
-                        .and_then(|s| s.to_str())
-                        .unwrap_or("archive")
-                ),
-                rx,
-                cancel,
-                move |res| match res {
-                    Ok(OperationSummary::Created(output_path)) => cb_done(Some(output_path)),
-                    Ok(_) => cb_done(None),
-                    Err(ArchiveError::Cancelled) => cb_done(None),
-                    Err(err) => {
-                        show_error_dialog(
-                            parent_err.as_ref(),
-                            "Failed to Create Archive",
-                            &err.to_string(),
-                        );
-                        cb_done(None);
+                    let cb_done = cb.clone();
+                    let parent_err = parent_cloned.clone();
+                    run_worker_with_progress(
+                        app_cloned.as_ref(),
+                        parent_cloned.as_ref(),
+                        &format!(
+                            "Creating {}",
+                            output_path
+                                .file_name()
+                                .and_then(|s| s.to_str())
+                                .unwrap_or("archive")
+                        ),
+                        rx,
+                        cancel,
+                        move |res| match res {
+                            Ok(OperationSummary::Created(output_path)) => {
+                                cb_done(Some(output_path))
+                            }
+                            Ok(_) | Err(ArchiveError::Cancelled) => cb_done(None),
+                            Err(err) => {
+                                show_error_dialog(
+                                    parent_err.as_ref(),
+                                    "Failed to Create Archive",
+                                    &err.to_string(),
+                                );
+                                cb_done(None);
+                            }
+                        },
+                    );
+                }
+            };
+
+            if output_path.symlink_metadata().is_ok() {
+                let name = output_path
+                    .file_name()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("archive");
+                let confirm = gtk::AlertDialog::builder()
+                    .modal(true)
+                    .message("Replace Existing Archive?")
+                    .detail(format!(
+                        "A file named \"{name}\" already exists. Do you want to overwrite it?"
+                    ))
+                    .buttons(["Cancel", "Replace"])
+                    .cancel_button(0)
+                    .default_button(0)
+                    .build();
+                confirm.choose(Some(&win_ref), gio::Cancellable::NONE, move |res| {
+                    if res == Ok(1) {
+                        start_creation(output_path, fmt, inputs, password);
                     }
-                },
-            );
+                });
+            } else {
+                start_creation(output_path, fmt, inputs, password);
+            }
         });
     }
 
