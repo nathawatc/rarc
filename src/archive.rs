@@ -105,6 +105,7 @@ pub struct ArchiveListing {
     pub entries: Vec<ArchiveEntry>,
     pub password: Option<String>,
     pub is_raw: bool,
+    pub format_name: String,
 }
 
 #[derive(Clone, Debug)]
@@ -458,6 +459,7 @@ pub fn list_archive(
         let mut entries = Vec::new();
         let mut needs_raw_retry = false;
         let mut first = true;
+        let mut format_name = String::new();
 
         unsafe {
             let mut entry: *mut ffi::archive_entry = ptr::null_mut();
@@ -480,16 +482,20 @@ pub fn list_archive(
                     return Err(reader_error(reader.as_ptr(), &pass_ctx));
                 }
 
-                if first && !raw_mode {
-                    let fmt = ffi::archive_format(reader.as_ptr()) & ffi::ARCHIVE_FORMAT_BASE_MASK;
-                    let is_mtree_ext = archive_path
-                        .extension()
-                        .and_then(|e| e.to_str())
-                        .is_some_and(|e| e.eq_ignore_ascii_case("mtree"));
-                    if fmt == ffi::ARCHIVE_FORMAT_MTREE && !is_mtree_ext {
-                        needs_raw_retry = true;
-                        break;
+                if first {
+                    if !raw_mode {
+                        let fmt =
+                            ffi::archive_format(reader.as_ptr()) & ffi::ARCHIVE_FORMAT_BASE_MASK;
+                        let is_mtree_ext = archive_path
+                            .extension()
+                            .and_then(|e| e.to_str())
+                            .is_some_and(|e| e.eq_ignore_ascii_case("mtree"));
+                        if fmt == ffi::ARCHIVE_FORMAT_MTREE && !is_mtree_ext {
+                            needs_raw_retry = true;
+                            break;
+                        }
                     }
+                    format_name = describe_reader_format(reader.as_ptr());
                 }
                 first = false;
 
@@ -548,6 +554,7 @@ pub fn list_archive(
             entries,
             password: pass_ctx.last_password(),
             is_raw: raw_mode,
+            format_name,
         });
     }
 }
@@ -1599,6 +1606,25 @@ fn reader_error(reader: *mut ffi::archive, pass_ctx: &PassphraseCtx) -> ArchiveE
     }
 }
 
+unsafe fn describe_reader_format(reader: *mut ffi::archive) -> String {
+    let fmt_ptr = unsafe { ffi::archive_format_name(reader) };
+    let fmt = if fmt_ptr.is_null() {
+        "Unknown".to_string()
+    } else {
+        unsafe { CStr::from_ptr(fmt_ptr) }
+            .to_string_lossy()
+            .into_owned()
+    };
+    let flt_code = unsafe { ffi::archive_filter_code(reader, 0) };
+    let flt_ptr = unsafe { ffi::archive_filter_name(reader, 0) };
+    if flt_code != ffi::ARCHIVE_FILTER_NONE && !flt_ptr.is_null() {
+        let flt = unsafe { CStr::from_ptr(flt_ptr) }.to_string_lossy();
+        format!("{fmt} ({flt})")
+    } else {
+        fmt
+    }
+}
+
 unsafe fn entry_pathname_string(entry: *mut ffi::archive_entry) -> Result<String, ArchiveError> {
     let mut ptr = unsafe { ffi::archive_entry_pathname_utf8(entry) };
     if ptr.is_null() {
@@ -1927,7 +1953,9 @@ mod ffi {
         pub fn archive_write_fail(a: *mut archive) -> c_int;
 
         pub fn archive_format(a: *mut archive) -> c_int;
+        pub fn archive_format_name(a: *mut archive) -> *const c_char;
         pub fn archive_filter_code(a: *mut archive, index: c_int) -> c_int;
+        pub fn archive_filter_name(a: *mut archive, index: c_int) -> *const c_char;
         pub fn archive_errno(a: *mut archive) -> c_int;
         pub fn archive_error_string(a: *mut archive) -> *const c_char;
 
