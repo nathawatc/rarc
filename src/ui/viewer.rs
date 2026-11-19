@@ -442,6 +442,62 @@ pub fn launch_standalone(app: &gtk::Application, initial_archive: Option<PathBuf
     });
 
     let tree_view = gtk::ListView::new(Some(tree_selection.clone()), Some(tree_factory));
+    {
+        let key_ctrl = gtk::EventControllerKey::new();
+        key_ctrl.set_propagation_phase(gtk::PropagationPhase::Capture);
+        let sel_key = tree_selection.clone();
+        let tv_key = tree_view.clone();
+        key_ctrl.connect_key_pressed(move |_, key, _, _| {
+            let Some(row) = sel_key.selected_item().and_downcast::<gtk::TreeListRow>() else {
+                return glib::Propagation::Proceed;
+            };
+            match key {
+                gdk::Key::Right | gdk::Key::KP_Right => {
+                    let pos = row.position();
+                    if row.is_expandable() && !row.is_expanded() {
+                        row.set_expanded(true);
+                        tv_key.scroll_to(
+                            pos,
+                            gtk::ListScrollFlags::FOCUS | gtk::ListScrollFlags::SELECT,
+                            None,
+                        );
+                        return glib::Propagation::Stop;
+                    }
+                    if row.is_expanded() && row.children().is_some_and(|c| c.n_items() > 0) {
+                        tv_key.scroll_to(
+                            pos + 1,
+                            gtk::ListScrollFlags::FOCUS | gtk::ListScrollFlags::SELECT,
+                            None,
+                        );
+                        return glib::Propagation::Stop;
+                    }
+                }
+                gdk::Key::Left | gdk::Key::KP_Left => {
+                    if row.is_expanded() {
+                        let pos = row.position();
+                        row.set_expanded(false);
+                        tv_key.scroll_to(
+                            pos,
+                            gtk::ListScrollFlags::FOCUS | gtk::ListScrollFlags::SELECT,
+                            None,
+                        );
+                        return glib::Propagation::Stop;
+                    }
+                    if let Some(parent) = row.parent() {
+                        tv_key.scroll_to(
+                            parent.position(),
+                            gtk::ListScrollFlags::FOCUS | gtk::ListScrollFlags::SELECT,
+                            None,
+                        );
+                        return glib::Propagation::Stop;
+                    }
+                }
+                _ => {}
+            }
+            glib::Propagation::Proceed
+        });
+        tree_view.add_controller(key_ctrl);
+    }
     let tree_scroll = gtk::ScrolledWindow::builder()
         .vexpand(true)
         .min_content_width(180)
@@ -615,6 +671,7 @@ pub fn launch_standalone(app: &gtk::Application, initial_archive: Option<PathBuf
         let filter_ref = filter.clone();
         let search_ref = search_entry.clone();
         let selection_ref = selection.clone();
+        let tree_view_ref = tree_view.clone();
         let tree_model_ref = tree_model.clone();
         let tree_sel_ref = tree_selection.clone();
         let nav_weak = Rc::downgrade(&nav_slot);
@@ -647,7 +704,7 @@ pub fn launch_standalone(app: &gtk::Application, initial_archive: Option<PathBuf
 
             if sync_tree {
                 state_ref.borrow_mut().syncing_tree = true;
-                sync_tree_selection(&tree_model_ref, &tree_sel_ref, &target_dir);
+                sync_tree_selection(&tree_view_ref, &tree_model_ref, &tree_sel_ref, &target_dir);
                 state_ref.borrow_mut().syncing_tree = false;
             }
 
@@ -1589,6 +1646,7 @@ fn render_breadcrumbs(
 }
 
 fn sync_tree_selection(
+    tree_view: &gtk::ListView,
     tree_model: &gtk::TreeListModel,
     tree_selection: &gtk::SingleSelection,
     target_dir: &str,
@@ -1615,6 +1673,11 @@ fn sync_tree_selection(
 
     if let Some(idx) = find_tree_row_index(tree_model, target_dir) {
         tree_selection.set_selected(idx);
+        tree_view.scroll_to(
+            idx,
+            gtk::ListScrollFlags::FOCUS | gtk::ListScrollFlags::SELECT,
+            None,
+        );
     }
 }
 
