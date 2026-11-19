@@ -407,7 +407,15 @@ msgstr ""
 msgid "Unable to Open Archive"
 msgstr ""
 
-#: src/ui/viewer/mod.rs:555
+#: src/ui/viewer/mod.rs:560
+msgid "Archive Files"
+msgstr ""
+
+#: src/ui/viewer/mod.rs:576
+msgid "All Files"
+msgstr ""
+
+#: src/ui/viewer/mod.rs:581
 msgid "Open Archive"
 msgstr ""
 

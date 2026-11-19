@@ -11,7 +11,7 @@ use std::path::{Component, Path, PathBuf};
 
 use async_channel::Sender;
 
-pub use formats::{archive_stem, is_supported_archive_path};
+pub use formats::{archive_stem, is_supported_archive_path, supported_archive_extensions};
 pub use read::{extract_archive_with_session, list_archive, test_archive};
 pub use write::{add_to_archive, create_archive};
 

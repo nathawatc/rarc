@@ -86,18 +86,24 @@ fn ends_with_ascii_ignore_case(s: &str, suffix_lower: &str) -> bool {
             .all(|(a, b)| a.to_ascii_lowercase() == *b)
 }
 
+/// Returns all supported archive and compressed-stream extensions (lowercase, with leading `.`).
+pub fn supported_archive_extensions() -> impl Iterator<Item = &'static str> {
+    COMPOUND_TAR_EXTS
+        .iter()
+        .copied()
+        .chain(
+            WRITABLE_EXT_SPECS
+                .iter()
+                .map(|(ext, _)| *ext)
+                .filter(|ext| !COMPOUND_TAR_EXTS.contains(ext)),
+        )
+        .chain(READONLY_ARCHIVE_EXTS.iter().copied())
+}
+
 /// Returns `true` when `path` ends with a known archive or compressed-stream extension.
 pub fn is_supported_archive_path(path: &Path) -> bool {
     let name = path.file_name().and_then(|s| s.to_str()).unwrap_or("");
-    COMPOUND_TAR_EXTS
-        .iter()
-        .any(|ext| ends_with_ascii_ignore_case(name, ext))
-        || WRITABLE_EXT_SPECS
-            .iter()
-            .any(|(ext, _)| ends_with_ascii_ignore_case(name, ext))
-        || READONLY_ARCHIVE_EXTS
-            .iter()
-            .any(|ext| ends_with_ascii_ignore_case(name, ext))
+    supported_archive_extensions().any(|ext| ends_with_ascii_ignore_case(name, ext))
 }
 
 /// Strips common archive extensions (including compound `.tar.*`) to derive a clean folder stem.

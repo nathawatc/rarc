@@ -407,7 +407,15 @@ msgstr "กำลังเปิด {name}"
 msgid "Unable to Open Archive"
 msgstr "ไม่สามารถเปิดแฟ้มจัดเก็บได้"
 
-#: src/ui/viewer/mod.rs:555
+#: src/ui/viewer/mod.rs:560
+msgid "Archive Files"
+msgstr "ไฟล์แฟ้มจัดเก็บ"
+
+#: src/ui/viewer/mod.rs:576
+msgid "All Files"
+msgstr "ไฟล์ทั้งหมด"
+
+#: src/ui/viewer/mod.rs:581
 msgid "Open Archive"
 msgstr "เปิดแฟ้มจัดเก็บ"
 

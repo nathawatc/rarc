@@ -552,7 +552,36 @@ fn install_header_actions(
         let win_ref = widgets.window.clone();
         let open_fn = open_archive.clone();
         widgets.open_btn.connect_clicked(move |_| {
-            let dialog = gtk::FileDialog::builder().title(tr("Open Archive")).build();
+            let mut exts: Vec<&'static str> =
+                crate::archive::supported_archive_extensions().collect();
+            exts.sort_unstable();
+
+            let archive_filter = gtk::FileFilter::new();
+            archive_filter.set_name(Some(&tr("Archive Files")));
+
+            let filters = gio::ListStore::new::<gtk::FileFilter>();
+            filters.append(&archive_filter);
+
+            for ext in exts {
+                let suffix = ext.trim_start_matches('.');
+                archive_filter.add_suffix(suffix);
+
+                let ext_filter = gtk::FileFilter::new();
+                ext_filter.set_name(Some(&format!("*{ext}")));
+                ext_filter.add_suffix(suffix);
+                filters.append(&ext_filter);
+            }
+
+            let all_filter = gtk::FileFilter::new();
+            all_filter.set_name(Some(&tr("All Files")));
+            all_filter.add_pattern("*");
+            filters.append(&all_filter);
+
+            let dialog = gtk::FileDialog::builder()
+                .title(tr("Open Archive"))
+                .filters(&filters)
+                .default_filter(&archive_filter)
+                .build();
             let open_fn = open_fn.clone();
             dialog.open(Some(&win_ref), gio::Cancellable::NONE, move |res| {
                 if let Ok(file) = res

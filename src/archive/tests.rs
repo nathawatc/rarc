@@ -762,3 +762,17 @@ fn selection_filter_matches_exact_and_descendants_only() {
     assert!(!filter.matches("a/bc/d.txt"));
     assert!(!filter.matches("a"));
 }
+
+#[test]
+fn supported_archive_extensions_unique_and_complete() {
+    let exts: Vec<&str> = supported_archive_extensions().collect();
+    let unique: HashSet<&str> = exts.iter().copied().collect();
+    assert_eq!(exts.len(), unique.len(), "duplicate extensions in list");
+    assert!(exts.iter().all(|e| e.starts_with('.') && e.len() > 1));
+    assert!(unique.contains(".zip"));
+    assert!(unique.contains(".tar.zst"));
+    assert!(unique.contains(".tar.z"));
+    assert!(unique.contains(".rar"));
+    assert!(is_supported_archive_path(Path::new("ARCHIVE.ZIP")));
+    assert!(!is_supported_archive_path(Path::new("notes.txt")));
+}
